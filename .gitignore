@@ -1,0 +1,17 @@
+.worktrees/
+worktrees/
+vendor/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.env
+artifacts/
+*.pt
+*.safetensors
+*.bin
+dist/
+build/
+*.egg-info/
