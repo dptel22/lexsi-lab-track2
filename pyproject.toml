@@ -1,0 +1,12 @@
+[project]
+name = "circuit-kavach-aya"
+version = "0.1.0"
+description = "In-weights surgical safety intervention pipeline for CohereLabs/tiny-aya-fire"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".worktrees", "vendor", ".venv", "artifacts"]
+pythonpath = ["src"]
+addopts = "-v --import-mode=importlib"

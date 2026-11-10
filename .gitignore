@@ -15,3 +15,18 @@ artifacts/
 dist/
 build/
 *.egg-info/
+
+# Agent metadata & local tooling
+.agents/
+.gemini/
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
