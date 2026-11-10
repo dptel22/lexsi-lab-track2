@@ -87,12 +87,13 @@ def test_provenance_bundle_generation(tmp_path: Path):
     calib, ev = generate_300_pairs()
     export_provenance_bundle(tmp_path, calib, ev)
     
-    # 5 mandatory files exist + 2 data splits
+    # 5 mandatory files exist + 2 data splits + README.md for Hugging Face
     assert (tmp_path / "calibration_100_pairs.jsonl").is_file()
     assert (tmp_path / "eval_200_pairs.jsonl").is_file()
     assert (tmp_path / "manifest.json").is_file()
     assert (tmp_path / "rejected.jsonl").is_file()
     assert (tmp_path / "dataset_card.md").is_file()
+    assert (tmp_path / "README.md").is_file()
     assert (tmp_path / "lexsi_provenance.json").is_file()
     assert (tmp_path / "checksums.txt").is_file()
     
