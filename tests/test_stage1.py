@@ -92,3 +92,33 @@ def test_provenance_bundle_generation(tmp_path: Path):
         assert target_file.is_file(), f"File in checksums.txt not found: {fname}"
         actual_hash = hashlib.sha256(target_file.read_bytes()).hexdigest()
         assert actual_hash == expected_hash, f"SHA-256 mismatch for {fname}"
+
+
+def test_arg_parser():
+    from stage1_curate import build_arg_parser
+    parser = build_arg_parser()
+    args = parser.parse_args(["--output-dir", "custom_dir", "--skip-upload"])
+    assert args.output_dir == "custom_dir"
+    assert args.skip_upload is True
+
+
+def test_upload_to_hf_dry_run(monkeypatch, tmp_path: Path):
+    from stage1_curate import upload_to_hf
+    dummy_file = tmp_path / "sample.txt"
+    dummy_file.write_text("hello")
+    
+    uploaded_folders = []
+    class DummyHfApi:
+        def __init__(self, token=None):
+            self.token = token
+        def create_repo(self, repo_id, repo_type="dataset", exist_ok=True):
+            pass
+        def upload_folder(self, *, folder_path, repo_id, repo_type, commit_message=None):
+            uploaded_folders.append((folder_path, repo_id, repo_type))
+            return "https://huggingface.co/datasets/test/mock"
+
+    monkeypatch.setattr("stage1_curate.HfApi", DummyHfApi)
+    url = upload_to_hf(tmp_path, "soapyyapps/circuit-kavach-cyber-codemixed", token="mock")
+    assert len(uploaded_folders) == 1
+    assert uploaded_folders[0][1] == "soapyyapps/circuit-kavach-cyber-codemixed"
+    assert "huggingface.co" in url

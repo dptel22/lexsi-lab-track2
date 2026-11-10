@@ -476,3 +476,112 @@ size_categories:
         "checksums": checksums_path,
         "manifest": manifest_path,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI & Hugging Face Hub Integration
+# ─────────────────────────────────────────────────────────────────────────────
+
+import argparse
+import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
+    from huggingface_hub import HfApi
+except ImportError:
+    HfApi = None  # type: ignore[assignment, misc]
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Builds CLI argument parser for Stage 1 dataset curation."""
+    parser = argparse.ArgumentParser(
+        description="CircuitKavach Stage 1: Multilingual Cybersecurity Selectivity Dataset Curation & Provenance"
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=str,
+        default="artifacts/stage1_dataset",
+        help="Target directory to write dataset splits and provenance files.",
+    )
+    parser.add_argument(
+        "--repo-id",
+        type=str,
+        default=None,
+        help="Target Hugging Face Hub dataset repository ID (defaults to <HF_USERNAME>/circuit-kavach-cyber-codemixed).",
+    )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help="Skip uploading the curated dataset to Hugging Face Hub.",
+    )
+    return parser
+
+
+def upload_to_hf(
+    folder_path: str | Path,
+    repo_id: str,
+    token: str | None = None,
+) -> str:
+    """Uploads the dataset artifacts directory to Hugging Face Hub."""
+    if HfApi is None:
+        raise RuntimeError("huggingface_hub is not installed in the environment.")
+
+    resolved_token = token or os.getenv("HF_TOKEN")
+    if not resolved_token:
+        raise ValueError("HF_TOKEN is required for uploading to Hugging Face Hub.")
+
+    api = HfApi(token=resolved_token)
+    api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+    api.upload_folder(
+        folder_path=str(folder_path),
+        repo_id=repo_id,
+        repo_type="dataset",
+        commit_message="feat: upload Stage 1 curated code-mixed cyber safety dataset with CuratorKIT provenance",
+    )
+    return f"https://huggingface.co/datasets/{repo_id}"
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    print("[Stage 1] Generating 300 contrast pairs (en, hi_en, gu_en, kn_en)...")
+    calib_pairs, eval_pairs = generate_300_pairs()
+
+    print(f"[Stage 1] Exporting CuratorKIT provenance bundle to {args.output_dir}...")
+    bundle = export_provenance_bundle(args.output_dir, calib_pairs, eval_pairs)
+
+    print(f"  ✓ Calibration split: {bundle['calibration']} ({len(calib_pairs)} pairs)")
+    print(f"  ✓ Evaluation split:  {bundle['eval']} ({len(eval_pairs)} pairs)")
+    print(f"  ✓ Manifest:          {bundle['manifest']}")
+    print(f"  ✓ Checksums:         {bundle['checksums']}")
+    print(f"  ✓ Provenance:        {bundle['provenance']}")
+
+    if not args.skip_upload:
+        hf_username = os.getenv("HF_USERNAME", "soapyyapps")
+        target_repo = args.repo_id or f"{hf_username}/circuit-kavach-cyber-codemixed"
+        token = os.getenv("HF_TOKEN")
+
+        if not token:
+            print("[Stage 1] Warning: HF_TOKEN not found in environment. Skipping upload.")
+            return
+
+        print(f"[Stage 1] Uploading dataset bundle to Hugging Face Hub: {target_repo}...")
+        try:
+            url = upload_to_hf(args.output_dir, target_repo, token=token)
+            print(f"  ✓ Successfully uploaded to Hugging Face Hub: {url}")
+        except Exception as e:
+            print(f"[Stage 1] Upload failed: {e}")
+            raise
+    else:
+        print("[Stage 1] --skip-upload specified. Local artifacts ready.")
+
+
+if __name__ == "__main__":
+    main()
