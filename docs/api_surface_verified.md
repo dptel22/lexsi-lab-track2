@@ -847,3 +847,65 @@ This specification is invalidated and requires immediate re-mining if:
 2. The canonical schema identifier string `lexsi.provenance/1` is renamed or altered in any upstream library.
 3. The model checkpoint `CohereLabs/tiny-aya-fire` changes its layer count, GQA ratio, or NoPE layer distribution.
 4. Any third-party dependency is added to `pyproject.toml` or `src/stage1_curate.py`, violating the standard library mandate.
+
+
+---
+
+## 8. Addendum (2026-11-10): Step A Plan Claims, Re-Verified Against `vendor/`
+
+Vendor commits unchanged since §1 (all 2026-11-07): CuratorKIT `cee1aed`, CircuitKIT `227fafd`, SafeTune `1d824f0`, AuditKIT `9da5838`.
+
+### 8.1 Claim-by-claim verdict
+
+| Claim in Step A plan | Verdict | Source of truth |
+|---|---|---|
+| CuratorKIT writes `manifest.json`, `rejected.jsonl`, `dataset_card.md`, `lexsi_provenance.json`, `checksums.txt` | ✅ True | `vendor/CuratorKIT/README.md:48,137,192-197` |
+| CuratorKIT quickstart runs without an API key; Ollama via `llm_model="ollama/..."` | ✅ True | `README.md:137,157` |
+| CircuitKIT pins `transformer-lens==3.8.0`, `transformers>=5.15,<6`; import `circuitkit` before `transformer_lens` | ✅ True | `vendor/CircuitKIT/pyproject.toml`, `src/circuitkit/__init__.py:37,161` |
+| CircuitKIT `Pipeline(model, task=...)` exists | ✅ True | `src/circuitkit/pipeline.py:101` |
+| Custom contrastive data goes into CircuitKIT | ✅ via **CSV** + templates: `Pipeline.from_custom_data(model_name, data_path, *, clean_prompt, clean_answer, corrupt_prompt, corrupt_answer, ...)` | `pipeline.py` `from_custom_data` |
+| `CohereLabs/tiny-aya-fire` registered | ✅ True | `backends/_tl_compat/cohere.py:108`, `docs/advanced/tiny-aya.md:37` |
+| GPT-2 runs end-to-end on CPU; 6-pillar faithfulness | ✅ True | `README.md:13,36,92` |
+| SafeTune requires Python ≥ 3.12; `torch>=2.7`, `transformers>=5.15,<6`, `peft` | ✅ True | `vendor/SafeTune/pyproject.toml` |
+| Faithfulness badges Faithful / Simplified / Variant / Wrong / Stub | ✅ True | `README.md:276-285`, `docs/community/scope.md` |
+| `SafeGradTrainer` is Faithful | ✅ True (Harden) | `scope.md:71` |
+| `ReStaTrainer` is Faithful | ✅ True (`apply_resta`, Recover) | `scope.md:62` |
+| AuditKIT `model="echo"` test backend | ✅ True → `EchoModel()` | `src/auditkit/__init__.py:632`, `AGENTS.md` |
+| `ak.compare_models(models, dataset, scorers, *, model_names, ...) -> CompareResult` | ✅ True | `src/auditkit/model_compare.py:506` |
+| `RedTeamRunner(model).run(probes=None, detectors=None)` | ✅ True | `src/auditkit/redteam/runner.py:110` |
+
+### 8.2 Faithful methods relevant to Stage 3 (from `scope.md:58-71`)
+
+- **Recover:** `apply_ctheta` (**C-ΔΘ, circuit-guided**), `apply_safemerge`, `apply_resta`, `apply_qresafe`, `apply_aaq`, `scrub_unlearn`, `task_arithmetic`, …
+- **Harden:** `CSTTrainer`, `EMACallback`, `SafeGradTrainer`, `SPPFTTrainer`, …
+- `eap_safety_circuit` is **Simplified** (do not cite it as the full method).
+
+```python
+# vendor/SafeTune/.../recover (Faithful). Mutates target in place.
+def apply_ctheta(target, positive, negative, circuit_info, strength=1.0,
+                 layer_subset=None, target_modules=None) -> nn.Module
+    # target += strength * (positive - negative), ONLY on params matched by the circuit mask
+def apply_resta(finetuned, *, base, aligned, alpha=1.0, param_filter=None,
+                dare=False, dare_drop_rate=None, dare_seed=None, device=None) -> nn.Module
+
+class ReStaTrainer(model=None, *, base_model, aligned_model, alpha=1.0, dare=True,
+                   dare_drop_rate=None, dare_seed=0, device=None)
+    # Docstring: "On Tiny Aya, alpha=1 breaks the model; use alpha~0.25 (>=0.5 breaks it)."
+class SafeGradTrainer(model=None, tokenizer=None, *, rho=1.0, kl_temperature=1.0,
+                      reference_model_path=None, epochs=1, lr=1e-4, ...)
+    .train(train_dataset, out_dir=None, *, safety_dataset=None) -> str   # LoRA-based (_lora_base)
+```
+
+### 8.3 Constraints the plan must absorb
+
+1. **EAP-IG token-length alignment.** `eap_utils.tokenize_batch_pair` warns when clean/corrupt pairs differ in token count. It end-pads, so mid-sequence length changes make the attribution *unreliable*. The Stage 1 twins (harmful vs. defensive) are naturally different lengths. The Stage 2 CSV therefore needs length-matched or end-differing pairs, or the warning has to be accepted and reported.
+2. **Every Faithful weight-space method needs two reference weight sets.** RESTA: (`base`, `aligned`). C-ΔΘ: (`positive`, `negative`). "Repairing" `tiny-aya-fire` on its own isn't defined until we pick what those references are. Leading option, using only Faithful methods:
+   - **Checkpoint 2 (global):** `SafeGradTrainer` LoRA on all layers, trained on the calibration split, then merged.
+   - **Checkpoint 3 (surgical):** `apply_ctheta(target=fire, positive=checkpoint2, negative=fire, circuit_info=stage2)`. This transfers Checkpoint 2's repair delta *only* into the circuit-located parameters. No second training run is needed.
+   - **Adapter (Rule 4):** Checkpoint 2's SafeGrad LoRA adapter. A circuit-only adapter would need LoRA `target_modules` limited to circuit layers, which is not yet verified as a `_HardenBase` kwarg.
+3. **The old §6 contract predates this plan.** File names differ: `stage2_discover_circuit.py` vs. `stage2_discover.py`, `data/curated/` vs. `artifacts/stage1_dataset/`. Pick one naming before Phase 1.
+4. **Runtime-verified call shapes (executed in `.venv`, 2026-11-10). These override the docs:**
+   - `AGENTS.md` quickstart `ak.evaluate(model=..., prompts=..., metrics=...)` is **stale** and raises `TypeError: missing 'dataset'`. The working form is `ak.evaluate([ak.Sample(input=..., target=...)], "echo", [ak.Contains(...)])`, which returns a `RunResult` with a fingerprint and perf. `Sample` uses `target`, not `expected`.
+   - `ReStaTrainer` is **not** in `safetune.recover`. Import it from `safetune.runner.recover`. `safetune.recover.apply_ctheta` and `safetune.harden.SafeGradTrainer` import as documented.
+   - Local stack: torch `2.15.0+cpu`, transformers `5.22.2`, transformer-lens `3.8.0`. `tests/test_env.py` passes 5/5.
+5. **Local CPU env.** Only `.venv` (Python 3.12.10) remains. The `.worktrees/circuit-kavach` worktree was merged and removed (`git worktree list` shows only `main`). Install torch from the **CPU wheel index** so we don't pull CUDA builds.
