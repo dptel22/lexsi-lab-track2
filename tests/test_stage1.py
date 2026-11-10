@@ -52,6 +52,33 @@ def test_generate_300_pairs_invariants():
         assert p.keyword.lower() in p.harmful.lower(), f"Harmful missing keyword in {p.pair_id}"
         assert p.keyword.lower() in p.benign.lower(), f"Benign missing keyword in {p.pair_id}"
 
+    # 4. Balanced threat categories across both splits
+    categories = ["web_api_exploitation", "credential_financial_phishing", "recon_malware_delivery"]
+    for cat in categories:
+        calib_cat = [p for p in calib if p.threat_category == cat]
+        eval_cat = [p for p in ev if p.threat_category == cat]
+        assert len(calib_cat) >= 30, f"Expected >=30 calib pairs for {cat}, got {len(calib_cat)}"
+        assert len(eval_cat) >= 60, f"Expected >=60 eval pairs for {cat}, got {len(eval_cat)}"
+
+    # 5. Shared prefix token alignment up to keyword and clean IDs
+    for p in all_pairs:
+        kw_h = p.harmful.index(p.keyword)
+        kw_b = p.benign.index(p.keyword)
+        assert p.harmful[:kw_h + len(p.keyword)] == p.benign[:kw_b + len(p.keyword)]
+        assert "__" not in p.pair_id, f"Double underscore in pair ID {p.pair_id}"
+
+
+def test_run_quality_gate():
+    from stage1_curate import run_quality_gate, ContrastPair
+    good_pair = ContrastPair("p1", "en", "web_api_exploitation", "SQLi", "run SQLi attack", "fix SQLi bug")
+    dup_pair = ContrastPair("p1", "en", "web_api_exploitation", "SQLi", "run SQLi attack", "fix SQLi bug")
+    bad_kw_pair = ContrastPair("p2", "en", "web_api_exploitation", "SQLi", "attack without kw", "fix SQLi bug")
+    passed, rejected = run_quality_gate([good_pair, dup_pair, bad_kw_pair])
+    assert len(passed) == 1
+    assert len(rejected) == 2
+    assert rejected[0].rejection_reason == "duplicate_pair_id"
+    assert rejected[1].rejection_reason == "harmful_missing_exact_keyword"
+
 
 def test_provenance_bundle_generation(tmp_path: Path):
     import hashlib

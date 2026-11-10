@@ -216,6 +216,13 @@ _TEMPLATES = {
 }
 
 
+_CATEGORY_TAGS = {
+    "web_api_exploitation": "web",
+    "credential_financial_phishing": "phish",
+    "recon_malware_delivery": "malw",
+}
+
+
 def generate_300_pairs() -> tuple[list[ContrastPair], list[ContrastPair]]:
     """Generates 300 balanced contrast pairs (100 calibration, 200 evaluation)."""
     languages = ["en", "hi_en", "gu_en", "kn_en"]
@@ -225,15 +232,18 @@ def generate_300_pairs() -> tuple[list[ContrastPair], list[ContrastPair]]:
         "recon_malware_delivery",
     ]
 
-    all_pairs_by_lang: dict[str, list[ContrastPair]] = {l: [] for l in languages}
+    calibration_pairs: list[ContrastPair] = []
+    eval_pairs: list[ContrastPair] = []
 
     for lang in languages:
         pair_num = 1
         for cat in categories:
             keywords = _KEYWORDS[cat]
             prefix, attack_suffix, defense_suffix = _TEMPLATES[lang][cat]
+            cat_tag = _CATEGORY_TAGS[cat]
+            cat_pairs: list[ContrastPair] = []
             for kw in keywords:
-                pid = f"{lang}_{cat[:4]}_{pair_num:03d}"
+                pid = f"{lang}_{cat_tag}_{pair_num:03d}"
                 harmful = f"{prefix} {kw} {attack_suffix}"
                 benign = f"{prefix} {kw} {defense_suffix}"
                 pair = ContrastPair(
@@ -244,19 +254,23 @@ def generate_300_pairs() -> tuple[list[ContrastPair], list[ContrastPair]]:
                     harmful=harmful,
                     benign=benign,
                 )
-                all_pairs_by_lang[lang].append(pair)
+                cat_pairs.append(pair)
                 pair_num += 1
 
-    calibration_pairs: list[ContrastPair] = []
-    eval_pairs: list[ContrastPair] = []
-
-    # Deterministic split: For each language (75 pairs):
-    # - First 25 pairs -> Calibration split (100 pairs total across 4 languages)
-    # - Remaining 50 pairs -> Evaluation split (200 pairs total across 4 languages)
-    for lang in languages:
-        pairs = all_pairs_by_lang[lang]
-        calibration_pairs.extend(pairs[:25])
-        eval_pairs.extend(pairs[25:])
+            # Stratified split per category:
+            # - web_api_exploitation (25 pairs): 8 calib, 17 eval
+            # - credential_financial_phishing (25 pairs): 8 calib, 17 eval
+            # - recon_malware_delivery (25 pairs): 9 calib, 16 eval
+            # Total per language = 25 calib (8+8+9), 50 eval (17+17+16)
+            if cat == "web_api_exploitation":
+                calibration_pairs.extend(cat_pairs[:8])
+                eval_pairs.extend(cat_pairs[8:])
+            elif cat == "credential_financial_phishing":
+                calibration_pairs.extend(cat_pairs[:8])
+                eval_pairs.extend(cat_pairs[8:])
+            else:  # recon_malware_delivery
+                calibration_pairs.extend(cat_pairs[:9])
+                eval_pairs.extend(cat_pairs[9:])
 
     return calibration_pairs, eval_pairs
 
@@ -408,11 +422,19 @@ size_categories:
 
     # 4. Generate lexsi_provenance.json
     prov_path = out / "lexsi_provenance.json"
+    git_sha: str | None = None
+    try:
+        import subprocess
+        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+        git_sha = res.stdout.strip()
+    except Exception:
+        git_sha = None
+
     prov_data = {
         "schema": "lexsi.provenance/1",
         "library": "curatorkit",
         "version": "0.1.21",
-        "git_sha": None,
+        "git_sha": git_sha,
         "created_at": now_iso,
         "base_model": "CohereLabs/tiny-aya-fire",
         "method": "contrastive_lexical_twin_curation",
@@ -553,6 +575,13 @@ def main() -> None:
 
     print("[Stage 1] Generating 300 contrast pairs (en, hi_en, gu_en, kn_en)...")
     calib_pairs, eval_pairs = generate_300_pairs()
+
+    # Pass all pairs through the quality gate to verify 100% compliance
+    all_pairs = calib_pairs + eval_pairs
+    passed_pairs, gate_rejected = run_quality_gate(all_pairs)
+    assert len(passed_pairs) == 300, f"Expected 300 passed pairs, got {len(passed_pairs)}"
+    assert len(gate_rejected) == 0, f"Unexpected rejections in generated dataset: {gate_rejected}"
+    print(f"[Stage 1] Quality gate passed: 300/300 pairs verified against lexical twin invariants.")
 
     print(f"[Stage 1] Exporting CuratorKIT provenance bundle to {args.output_dir}...")
     bundle = export_provenance_bundle(args.output_dir, calib_pairs, eval_pairs)
