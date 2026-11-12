@@ -1,0 +1,27 @@
+{
+  "schema": "lexsi.provenance/1",
+  "library": "curatorkit",
+  "version": "0.1.21",
+  "git_sha": "0b696b50492a31d1b5b9199f644094b637381375",
+  "created_at": "2026-11-10T15:00:50Z",
+  "base_model": "CohereLabs/tiny-aya-fire",
+  "method": "contrastive_lexical_twin_curation",
+  "inputs": [],
+  "params": {
+    "total_pairs": 300,
+    "calibration_pairs": 100,
+    "eval_pairs": 200,
+    "languages": [
+      "en",
+      "hi_en",
+      "gu_en",
+      "kn_en"
+    ],
+    "categories": [
+      "web_api_exploitation",
+      "credential_financial_phishing",
+      "recon_malware_delivery"
+    ],
+    "twin_strategy": "shared_prefix_slotting"
+  }
+}

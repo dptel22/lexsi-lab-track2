@@ -1,0 +1,51 @@
+{
+  "dataset_name": "circuit-kavach-cyber-codemixed",
+  "created_at": "2026-11-10T15:00:50Z",
+  "total_passed": 300,
+  "total_rejected": 2,
+  "stage_counts": {
+    "lexical_twin_gate": {
+      "passed": 300,
+      "rejected": 2
+    },
+    "deduplication_gate": {
+      "passed": 300,
+      "rejected": 0
+    }
+  },
+  "checksums": {
+    "calibration_100_pairs.jsonl": "e9aabcf3b209cf985fb0f1a22519b03ee59f70347a0282eb482cc5e67298211f",
+    "eval_200_pairs.jsonl": "7f5497dbb7c6234053f460123b84b4c428ce2739a6e661e5b9edd42584101fd8",
+    "rejected.jsonl": "d60b7b64b7c7ff4027eeefd561e0c26a9663e14e9eca0bcd58002123a9ab884f",
+    "dataset_card.md": "87e5ad9846d5406af16239444ace574f33488777aa0df73c2bcb521752cfd244",
+    "README.md": "87e5ad9846d5406af16239444ace574f33488777aa0df73c2bcb521752cfd244",
+    "lexsi_provenance.json": "781ceeeb312929293da999584a5436b5eee498886cf85be0b87c892c8256b833"
+  },
+  "provenance": {
+    "schema": "lexsi.provenance/1",
+    "library": "curatorkit",
+    "version": "0.1.21",
+    "git_sha": "0b696b50492a31d1b5b9199f644094b637381375",
+    "created_at": "2026-11-10T15:00:50Z",
+    "base_model": "CohereLabs/tiny-aya-fire",
+    "method": "contrastive_lexical_twin_curation",
+    "inputs": [],
+    "params": {
+      "total_pairs": 300,
+      "calibration_pairs": 100,
+      "eval_pairs": 200,
+      "languages": [
+        "en",
+        "hi_en",
+        "gu_en",
+        "kn_en"
+      ],
+      "categories": [
+        "web_api_exploitation",
+        "credential_financial_phishing",
+        "recon_malware_delivery"
+      ],
+      "twin_strategy": "shared_prefix_slotting"
+    }
+  }
+}

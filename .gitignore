@@ -40,16 +40,19 @@ htmlcov/
 *.log
 *.sqlite
 *.sqlite3
+logs/
 
-# Model weights & large artifacts
-artifacts/
+# Model weights & large artifacts (keep Stage 1 curated dataset trackable)
+artifacts/*
+!artifacts/stage1_dataset/
 *.pt
 *.safetensors
 *.bin
 *.onnx
 
-# Agent metadata & local tooling
-.agents/
+# Agent metadata & local tooling (keep .agents/skills/ trackable)
+.agents/teamwork/
+.superpowers/
 .gemini/
 
 # IDE & Editor files

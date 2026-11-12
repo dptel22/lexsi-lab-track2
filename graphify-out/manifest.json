@@ -1,0 +1,170 @@
+{
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\artifacts\\stage1_dataset\\lexsi_provenance.json": {
+    "mtime": 1794322850.7746227,
+    "seen": 1794473142.0445514,
+    "ast_hash": "7bfe81af3882950559abfef01a53e742",
+    "semantic_hash": "7bfe81af3882950559abfef01a53e742"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\artifacts\\stage1_dataset\\manifest.json": {
+    "mtime": 1794322850.8127253,
+    "seen": 1794473142.0445595,
+    "ast_hash": "cbc7bd337113eebd57c87fb5ce5ffa79",
+    "semantic_hash": "cbc7bd337113eebd57c87fb5ce5ffa79"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\pyproject.toml": {
+    "mtime": 1794290388.698965,
+    "seen": 1794473142.0445633,
+    "ast_hash": "149749e84faf06ec09f6598740cbe69b",
+    "semantic_hash": "149749e84faf06ec09f6598740cbe69b"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\scripts\\run_hf_jobs.sh": {
+    "mtime": 1794469971.8186471,
+    "seen": 1794473142.0445645,
+    "ast_hash": "dbe34702c41afd6129854691176194d8",
+    "semantic_hash": "dbe34702c41afd6129854691176194d8"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\src\\__init__.py": {
+    "mtime": 1794290388.7000875,
+    "seen": 1794473142.0445662,
+    "ast_hash": "0e3641d1afde3cf060f37595f0150c38",
+    "semantic_hash": "0e3641d1afde3cf060f37595f0150c38"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\src\\stage1_curate.py": {
+    "mtime": 1794322940.8460698,
+    "seen": 1794473142.0445676,
+    "ast_hash": "0c4c77135656a6dadeaf1ad49690d67b",
+    "semantic_hash": "0c4c77135656a6dadeaf1ad49690d67b"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\src\\stage2_discover.py": {
+    "mtime": 1794470710.9991503,
+    "seen": 1794473142.0445688,
+    "ast_hash": "1a4fbbbfacdf175e47d37b5c105d36c4",
+    "semantic_hash": "1a4fbbbfacdf175e47d37b5c105d36c4"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\src\\stage3_repair.py": {
+    "mtime": 1794470712.8987832,
+    "seen": 1794473142.0445702,
+    "ast_hash": "2d1935f80f8dae4002c390b2ad9d9458",
+    "semantic_hash": "2d1935f80f8dae4002c390b2ad9d9458"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\src\\stage4_eval.py": {
+    "mtime": 1794470716.3917239,
+    "seen": 1794473142.0445712,
+    "ast_hash": "75b4cd0b816db0447050e0fffeb6bb19",
+    "semantic_hash": "75b4cd0b816db0447050e0fffeb6bb19"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\__init__.py": {
+    "mtime": 1794290388.7006946,
+    "seen": 1794473142.0445724,
+    "ast_hash": "59a7700f59433a27f7f7af121b07baeb",
+    "semantic_hash": "59a7700f59433a27f7f7af121b07baeb"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\test_env.py": {
+    "mtime": 1794290388.701886,
+    "seen": 1794473142.0445735,
+    "ast_hash": "f73d23e9aa5d29dc2c8c45b4fb372c9c",
+    "semantic_hash": "f73d23e9aa5d29dc2c8c45b4fb372c9c"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\test_stage1.py": {
+    "mtime": 1794322940.8470678,
+    "seen": 1794473142.0445747,
+    "ast_hash": "eb6e547d62e152e425e433c70343466d",
+    "semantic_hash": "eb6e547d62e152e425e433c70343466d"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\test_stage2.py": {
+    "mtime": 1794469193.2683947,
+    "seen": 1794473142.044576,
+    "ast_hash": "3cd35048e425d901cfa33694e5f6e6ba",
+    "semantic_hash": "3cd35048e425d901cfa33694e5f6e6ba"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\test_stage3.py": {
+    "mtime": 1794469195.5759034,
+    "seen": 1794473142.0445774,
+    "ast_hash": "2e338f17db6c64add2b1a69608f33f99",
+    "semantic_hash": "2e338f17db6c64add2b1a69608f33f99"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\tests\\test_stage4.py": {
+    "mtime": 1794470231.3296318,
+    "seen": 1794473142.0445783,
+    "ast_hash": "fb6b418c6a2f5fa3bc297e42d7144a2a",
+    "semantic_hash": "fb6b418c6a2f5fa3bc297e42d7144a2a"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\.agents\\skills\\hf-dataset-splits\\SKILL.md": {
+    "mtime": 1794405940.807403,
+    "seen": 1794473142.0445797,
+    "ast_hash": "33ceb1f74c79f31c7a9a6073064fdb2d",
+    "semantic_hash": "33ceb1f74c79f31c7a9a6073064fdb2d"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\AGENTS.md": {
+    "mtime": 1794471879.2940102,
+    "seen": 1794473142.0445812,
+    "ast_hash": "8cd183dfd1463487832092e9d22d3d25",
+    "semantic_hash": "8cd183dfd1463487832092e9d22d3d25"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\ANTIGRAVITY.md": {
+    "mtime": 1794150616.8038943,
+    "seen": 1794473142.0445821,
+    "ast_hash": "6e3775a474751ebbbc3373386f61e746",
+    "semantic_hash": "6e3775a474751ebbbc3373386f61e746"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\PROJECT.md": {
+    "mtime": 1794470101.7501316,
+    "seen": 1794473142.044584,
+    "ast_hash": "541a16f0b3c10c0334ff0708cd980d6a",
+    "semantic_hash": "541a16f0b3c10c0334ff0708cd980d6a"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\artifacts\\stage1_dataset\\README.md": {
+    "mtime": 1794322850.7191062,
+    "seen": 1794473142.044585,
+    "ast_hash": "201755eb3ec5f9b2c566f2a393b639a6",
+    "semantic_hash": "201755eb3ec5f9b2c566f2a393b639a6"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\artifacts\\stage1_dataset\\checksums.txt": {
+    "mtime": 1794322850.8115015,
+    "seen": 1794473142.0445864,
+    "ast_hash": "3a17812810c5ff6fdb0fa723a20ea5f4",
+    "semantic_hash": "3a17812810c5ff6fdb0fa723a20ea5f4"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\artifacts\\stage1_dataset\\dataset_card.md": {
+    "mtime": 1794322850.7181077,
+    "seen": 1794473142.0445876,
+    "ast_hash": "201755eb3ec5f9b2c566f2a393b639a6",
+    "semantic_hash": "201755eb3ec5f9b2c566f2a393b639a6"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\api_surface_verified.md": {
+    "mtime": 1794322940.8420532,
+    "seen": 1794473142.0445893,
+    "ast_hash": "73f1d4f1c197a6a4af109d7b2b936895",
+    "semantic_hash": "73f1d4f1c197a6a4af109d7b2b936895"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\superpowers\\plans\\2026-11-10-stage1-curate-dataset.md": {
+    "mtime": 1794322940.8440669,
+    "seen": 1794473142.0445902,
+    "ast_hash": "9407ecb27979df858344a14f6e336fab",
+    "semantic_hash": "9407ecb27979df858344a14f6e336fab"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\superpowers\\specs\\2026-11-10-stage1-dataset-design.md": {
+    "mtime": 1794322940.845068,
+    "seen": 1794473142.0445917,
+    "ast_hash": "1a13c7eca40e5601d026e84e0e963545",
+    "semantic_hash": "1a13c7eca40e5601d026e84e0e963545"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\superpowers\\specs\\2026-11-11-stage2-discover-design.md": {
+    "mtime": 1794469504.591777,
+    "seen": 1794473142.0445929,
+    "ast_hash": "6c2e4acb5f791782e148d4fb4dcbd1c1",
+    "semantic_hash": "6c2e4acb5f791782e148d4fb4dcbd1c1"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\superpowers\\specs\\2026-11-11-stage3-repair-design.md": {
+    "mtime": 1794459686.1472168,
+    "seen": 1794473142.0445943,
+    "ast_hash": "2e74cda3a1c542f5df095e7a91c10f49",
+    "semantic_hash": "2e74cda3a1c542f5df095e7a91c10f49"
+  },
+  "C:\\Users\\dhruv\\PycharmProjects\\lexsi-lab\\docs\\superpowers\\specs\\2026-11-11-stage4-eval-design.md": {
+    "mtime": 1794459689.2767994,
+    "seen": 1794473142.0445952,
+    "ast_hash": "c8aca72c4c1e5cf9646e96a0a42ea80a",
+    "semantic_hash": "c8aca72c4c1e5cf9646e96a0a42ea80a"
+  }
+}

@@ -1,0 +1,63 @@
+# Workspace Rules (`lexsi-lab`)
+
+## Credentials & `.env` Privacy
+- **NEVER read, cat, inspect, search-and-print, or output `.env`**, even to verify key formatting.
+- When checking whether credentials exist, rely on runtime `dotenv.load_dotenv()` + boolean `bool(os.getenv("VAR"))` checks or confirm with the user rather than opening `.env`.
+
+## Local Hardware Boundary (6 GB VRAM / CPU Verification)
+- Never load `CohereLabs/tiny-aya-fire` (3.35B) weights on the local Windows laptop (~6 GB VRAM / CPU-only `.venv`).
+- Perform all local Stage 2–4 smoke tests and pytest suites on CPU using `"gpt2"` (`dtype="float32"`) and `"echo"` models, reserving `tiny-aya-fire` execution for Colab Pro GPU.
+
+## CircuitKIT Import Order
+- Always `import circuitkit` **before** `import transformer_lens` so `circuitkit.backends._tl_compat` patches `cohere2` (`tiny-aya-fire`) before TransformerLens initializes.
+
+## Stage 2–4 Cloud GPU & Toolkit Guardrails
+- **CUDA / T4 Auto-Dtype Check (`including_emulation=False`):** When resolving `dtype="auto"` across Stage 2–4 scripts, check `torch.cuda.is_available()` **and** `not torch.cuda.is_bf16_supported(including_emulation=False)` on CUDA before defaulting to `bfloat16` (Turing T4 lacks native `bf16` and needs `float16`), while keeping `"cpu"` at `float32` so local laptop smoke tests do not misdetect CPU as T4.
+- **AuditKIT Precomputed Scoring & `DiskCache` Isolation:** Custom AuditKIT judges passed to `ak.evaluate(..., metrics=[...])` must inherit from `auditkit.metrics.Metric`, and `RunConfig(extra=...)` must include weights revision/mtime, `dtype`, `device`, `max_new_tokens`, `n_examples`, and prompt-set digest. Always serialize GPU inference per checkpoint (`_release_vram()`) before scoring.
+- **SafeTune PEFT State Restoration & Single-Wrap Discipline:** Call `lora_wrap(...)` once, train via `SafeGradHFTrainer`, save the unmerged LoRA adapter **before** `merge_and_unload()`, and explicitly restore `model.config.use_cache = True` and `disable_input_require_grads()` before saving Global Checkpoint 2 (`bfloat16` CPU reference offload when student is `float16`).
+- **Ephemeral Cloud Container Fail-Safe (`--upload-hf` + `--hydrate-hf`):** Verify `HfApi().whoami()` **before** loading 3.35B weights when `--upload-hf` is enabled, commit Phase A artifacts immediately after discovery/hardening before heavy evaluation, and support `--hydrate-hf` (`snapshot_download`) so downstream stages (`stage3`, `stage4`) run standalone on stateless HF Jobs containers.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **lexsi-lab-track2** (730 symbols, 1287 relationships, 42 execution flows).
+
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
+
+## Always Do
+
+- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
+- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
+- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+
+## Never Do
+
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit before MCP/CLI graph change analysis.
+
+## Resources
+
+| Resource | Use for |
+| --- | --- |
+| `gitnexus://repo/lexsi-lab-track2/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/lexsi-lab-track2/clusters` | All functional areas |
+| `gitnexus://repo/lexsi-lab-track2/processes` | All execution flows |
+| `gitnexus://repo/lexsi-lab-track2/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->
