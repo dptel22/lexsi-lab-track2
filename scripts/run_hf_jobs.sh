@@ -103,7 +103,7 @@ case "$STAGE" in
     ;;
   stage4)
     STAGE_SCRIPT="src/stage4_eval.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage4_eval_logs --hydrate-hf"
+    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage4_eval_logs --max-new-tokens 128 --hydrate-hf"
     ;;
 esac
 
