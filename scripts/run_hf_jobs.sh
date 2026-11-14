@@ -99,7 +99,7 @@ case "$STAGE" in
     ;;
   stage3)
     STAGE_SCRIPT="src/stage3_repair.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage3_repair --ref-offload-cpu --gradient-checkpointing --hydrate-hf"
+    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage3_repair --gradient-checkpointing --batch-size 1 --hydrate-hf"
     ;;
   stage4)
     STAGE_SCRIPT="src/stage4_eval.py"
