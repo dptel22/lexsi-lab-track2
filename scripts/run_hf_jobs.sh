@@ -29,6 +29,7 @@ STAGE=""
 FLAVOR="l4x1"
 FLAVOR_SET=false
 TIMEOUT="60m"
+TIMEOUT_SET=false
 HF_REPO="soapyyapps/circuit-kavach-cyber-codemixed"
 IMAGE="pytorch/pytorch:2.7.0-cuda12.6-cudnn9-runtime"
 LOW_VRAM_T4=false
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout)
       TIMEOUT="${2:-}"
+      TIMEOUT_SET=true
       shift 2
       ;;
     --hf-repo)
@@ -104,6 +106,9 @@ case "$STAGE" in
   stage4)
     STAGE_SCRIPT="src/stage4_eval.py"
     STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage4_eval_logs --max-new-tokens 128 --hydrate-hf"
+    if [[ "$TIMEOUT_SET" == "false" ]]; then
+      TIMEOUT="120m"
+    fi
     ;;
 esac
 

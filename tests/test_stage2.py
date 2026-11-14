@@ -1507,7 +1507,8 @@ def test_run_hf_jobs_script_contract_and_dry_run():
         out = res.stdout
         assert "DRY RUN:" in out
         assert "t4-small" in out
-        assert "60m" in out
+        expected_timeout = "120m" if stage == "stage4" else "60m"
+        assert expected_timeout in out
         assert "HF_TOKEN" in out
         assert ":/workspace:ro" in out
         assert expected_py in out

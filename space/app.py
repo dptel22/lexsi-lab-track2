@@ -66,7 +66,7 @@ _BASE_MODEL = AutoModelForCausalLM.from_pretrained(
 _BASE_MODEL.eval()
 
 
-@spaces.GPU(duration=45)
+@spaces.GPU(duration=15)
 def generate_response(prompt: str, language: str, max_new_tokens: int) -> tuple[str, str]:
     """Run deterministic greedy generation on ZeroGPU and validate telemetry with Pydantic v2."""
     clean_prompt = (prompt or "").strip()
