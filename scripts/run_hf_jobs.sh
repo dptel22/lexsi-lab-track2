@@ -146,6 +146,7 @@ HF_CMD=(
   --secrets HF_TOKEN
   -v .:/workspace:ro
   "$IMAGE"
+  --
   bash -lc "$CONTAINER_CMD"
 )
 
