@@ -11,7 +11,7 @@ Usage: scripts/run_hf_jobs.sh <stage2|stage3|stage4> [options] [-- extra stage a
 
 Options:
   --flavor <name>       HF Jobs GPU flavor (default: l4x1; e.g. t4-small, t4-medium, l4x1, a10g-small)
-  --timeout <duration>  HF Jobs timeout (default: 35m)
+  --timeout <duration>  HF Jobs timeout (default: 60m)
   --hf-repo <repo_id>   Target HF dataset repo (default: soapyyapps/circuit-kavach-cyber-codemixed)
   --image <docker_img>  Container image (default: pytorch/pytorch:2.7.0-cuda12.6-cudnn9-runtime)
   --low-vram-t4         Pass --low-vram-t4 (16 GB T4 compatibility mode) to the stage script
@@ -27,7 +27,8 @@ fi
 
 STAGE=""
 FLAVOR="l4x1"
-TIMEOUT="35m"
+FLAVOR_SET=false
+TIMEOUT="60m"
 HF_REPO="soapyyapps/circuit-kavach-cyber-codemixed"
 IMAGE="pytorch/pytorch:2.7.0-cuda12.6-cudnn9-runtime"
 LOW_VRAM_T4=false
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --flavor)
       FLAVOR="${2:-}"
+      FLAVOR_SET=true
       shift 2
       ;;
     --timeout)
@@ -97,13 +99,19 @@ case "$STAGE" in
     ;;
   stage3)
     STAGE_SCRIPT="src/stage3_repair.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage3_repair --hydrate-hf"
+    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage3_repair --ref-offload-cpu --gradient-checkpointing --hydrate-hf"
     ;;
   stage4)
     STAGE_SCRIPT="src/stage4_eval.py"
     STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage4_eval_logs --hydrate-hf"
     ;;
 esac
+
+if [[ "$FLAVOR" == t4* ]]; then
+  LOW_VRAM_T4=true
+elif [[ "$LOW_VRAM_T4" == "true" && "$FLAVOR_SET" == "false" ]]; then
+  FLAVOR="t4-small"
+fi
 
 if [[ "$LOW_VRAM_T4" == "true" ]]; then
   STAGE_FLAGS="$STAGE_FLAGS --low-vram-t4"
@@ -128,8 +136,8 @@ if [[ -z "$HF_CLI" ]]; then
   fi
 fi
 
-# Mount /workspace read-only cleanly, copy to writable /tmp/lexsi, install vendored kits, and execute stage.
-CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && cp -a /workspace /tmp/lexsi && cd /tmp/lexsi && python -m pip install --no-cache-dir --quiet ./vendor/CircuitKIT ./vendor/SafeTune ./vendor/AuditKIT python-dotenv huggingface_hub datasets accelerate peft trl && python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
+# Mount /workspace read-only cleanly, copy only runtime code/artifacts (excluding .venv/.env) to /tmp/lexsi, install vendored kits, and execute stage.
+CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && mkdir -p /tmp/lexsi && cp -a /workspace/src /workspace/vendor /workspace/scripts /workspace/pyproject.toml /tmp/lexsi/ && if [ -d /workspace/artifacts ]; then cp -a /workspace/artifacts /tmp/lexsi/; fi && cd /tmp/lexsi && python -m pip install --no-cache-dir --quiet ./vendor/CircuitKIT ./vendor/SafeTune ./vendor/AuditKIT python-dotenv huggingface_hub datasets accelerate peft trl && python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
 
 HF_CMD=(
   "$HF_CLI" jobs run

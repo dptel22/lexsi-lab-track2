@@ -1383,7 +1383,7 @@ def test_low_vram_t4_mode_overrides_profile_and_releases_vram(tmp_path):
             ]
         )
 
-    assert events == ["discover", "release", "evaluate", "release", "kl"]
+    assert events == ["release", "discover", "release", "evaluate", "release", "kl"]
     report = json.loads((tmp_path / "t4_out" / "faithfulness_report.json").read_text(encoding="utf-8"))
     assert report["runtime_profile"]["low_vram_t4"] is True
     assert report["runtime_profile"]["templated"] is False
@@ -1462,7 +1462,7 @@ def test_upload_hf_fails_fast_and_uploads_phase_a_before_evaluate(tmp_path, monk
 
 
 def test_run_hf_jobs_script_contract_and_dry_run():
-    """Validate scripts/run_hf_jobs.sh defaults (l4x1, 35m, HF_TOKEN, -v .:/workspace:ro) and bash dry-run."""
+    """Validate scripts/run_hf_jobs.sh defaults (l4x1, 60m, HF_TOKEN, -v .:/workspace:ro) and bash dry-run."""
     import shutil
     import subprocess
 
@@ -1471,7 +1471,7 @@ def test_run_hf_jobs_script_contract_and_dry_run():
     raw_bytes = script_path.read_bytes()
     assert b"\r\n" not in raw_bytes, "Shell script must use LF line endings"
     text = raw_bytes.decode("utf-8")
-    for required in ("l4x1", "35m", "HF_TOKEN", "-v .:/workspace:ro", "stage2|stage3|stage4", "--dry-run", "--low-vram-t4"):
+    for required in ("l4x1", "60m", "HF_TOKEN", "-v .:/workspace:ro", "stage2|stage3|stage4", "--dry-run", "--low-vram-t4"):
         assert required in text, f"Missing expected runner token: {required}"
 
     # Find real GNU/Git bash (avoid Windows System32 WSL stub if no distro installed)
@@ -1506,8 +1506,8 @@ def test_run_hf_jobs_script_contract_and_dry_run():
         assert res.returncode == 0, f"Dry-run failed for {stage}: {res.stderr}"
         out = res.stdout
         assert "DRY RUN:" in out
-        assert "l4x1" in out
-        assert "35m" in out
+        assert "t4-small" in out
+        assert "60m" in out
         assert "HF_TOKEN" in out
         assert ":/workspace:ro" in out
         assert expected_py in out
@@ -1554,3 +1554,28 @@ def test_stage2_t4_auto_dtype_and_upload_create_repo(tmp_path, monkeypatch) -> N
     mock_api.create_repo.assert_called_once_with(
         repo_id="soapyyapps/test-repo", repo_type="dataset", exist_ok=True
     )
+
+
+def test_stage2_hydrate_hf_cli_and_layer_cap_validation(tmp_path) -> None:
+    import sys
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage2_discover as s2
+
+    parser = s2.build_arg_parser()
+    parsed = parser.parse_args(["--hydrate-hf"])
+    assert parsed.hydrate_hf is True
+
+    try:
+        s2.apply_surgical_layer_cap(
+            {"blocks.0.hook_mlp_out": 1.0},
+            model_name="gpt2",
+            n_layers=2,
+            top_fraction=0.5,
+            max_surgical_layers=0,
+        )
+        raise AssertionError("Expected ValueError when max_surgical_layers=0")
+    except ValueError as exc:
+        assert ">= 1" in str(exc)

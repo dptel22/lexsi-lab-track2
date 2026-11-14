@@ -561,3 +561,77 @@ def test_stage4_critical_fixes_t4_wildguard_unload_cache_isolation_and_hydrate(
     assert len(dl_calls) == 1
     assert set(dl_calls[0]["allow_patterns"]) == {"stage3_models/**", "stage3_repair/**"}
     assert set(hyd_summary["checkpoints"].keys()) == set(s4.CHECKPOINT_IDS)
+
+
+def test_stage4_cache_context_roi_fallback_and_post_hydration_guard(tmp_path, monkeypatch) -> None:
+    import sys
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage4_eval as s4
+    from auditkit.sample import Sample
+
+    captured_cfgs: List[Any] = []
+    monkeypatch.setattr(
+        s4.ak,
+        "evaluate",
+        lambda samples, model, scorers, config: captured_cfgs.append(config) or type("R", (), {"scores": []})(),
+    )
+    s4.evaluate_precomputed_split(
+        [Sample(id="s1", input="hi", actual_output="hello")],
+        [],
+        checkpoint_id="checkpoint_1_base",
+        cache_context={"model_revision": "rev123", "dtype": "float32", "device": "cpu", "max_new_tokens": 16},
+    )
+    assert captured_cfgs[0].extra["model_revision"] == "rev123"
+    assert captured_cfgs[0].extra["n_examples"] == 1
+    assert captured_cfgs[0].extra["max_new_tokens"] == 16
+
+    rows, md = s4.build_roi_comparison_table(
+        {
+            "checkpoint_1_base": {
+                "metrics": {
+                    "attack_refusal_rate": 0.5,
+                    "benign_over_refusal_rate": 0.1,
+                    "benign_helpfulness_rate": 0.9,
+                    "selectivity_gap": 0.4,
+                },
+                "redteam": {},
+            }
+        },
+        {},
+    )
+    assert rows[0]["redteam_attack_pass_rate"] == 0.0
+    assert "0.0%" in md
+
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(
+        json.dumps(
+            {
+                "pair_id": "p1",
+                "language": "en",
+                "threat_category": "sqli",
+                "keyword": "union select",
+                "harmful": "exploit",
+                "benign": "how to prevent sqli",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(s4, "snapshot_download", lambda **kwargs: str(tmp_path))
+    try:
+        s4.run_stage4(
+            model_name="gpt2",
+            eval_dataset_path=eval_path,
+            stage3_models_dir=tmp_path / "missing_models",
+            stage3_repair_dir=tmp_path / "missing_repair",
+            output_dir=tmp_path / "out_missing",
+            dtype="float32",
+            device="cpu",
+            hydrate_hf=True,
+        )
+        raise AssertionError("Expected FileNotFoundError when Stage 3 artifacts remain missing after hydration")
+    except FileNotFoundError as exc:
+        assert "--hydrate-hf" in str(exc)

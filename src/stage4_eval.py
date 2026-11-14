@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 import auditkit as ak
+import circuitkit  # noqa: F401  # must precede transformer_lens if TL is imported downstream
 import torch
 from auditkit.errors import ExtraNotInstalled
 from auditkit.metrics.guard import GuardJudge
@@ -30,6 +32,7 @@ from auditkit.score import Direction, Score
 from auditkit.scorers import scorer
 from dotenv import load_dotenv
 from huggingface_hub import HfApi, snapshot_download
+from pydantic import BaseModel, ConfigDict
 from safetune.core.eval.pipeline.scorer import StringMatchJudge
 
 logger = logging.getLogger(__name__)
@@ -52,6 +55,28 @@ ATTACK_REDTEAM_PROBES = ("prompt_injection", "jailbreak", "encoding")
 ATTACK_REDTEAM_DETECTORS = ("keyword", "injection_success", "system_prompt_leak")
 BENIGN_REDTEAM_PROBES = ("refusal",)
 BENIGN_REDTEAM_DETECTORS = ("refusal",)
+
+
+class CheckpointPerfSchema(BaseModel):
+    """Pydantic v2 schema for Stage 4 per-checkpoint generation latency and throughput."""
+
+    model_config = ConfigDict(extra="allow")
+    wall_time_s: float
+    mean_latency_ms: float
+    total_output_tokens: int
+    tokens_per_sec: float
+
+
+class Stage4EvalSummarySchema(BaseModel):
+    """Pydantic v2 schema validating Stage 4 eval_summary.json before serialization."""
+
+    model_config = ConfigDict(extra="allow")
+    timestamp: str
+    model: str
+    n_eval_pairs: int
+    n_eval_prompts: int
+    checkpoints: Dict[str, Dict[str, Any]]
+    roi_table: List[Dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -332,16 +357,19 @@ def evaluate_precomputed_split(
     *,
     checkpoint_id: str,
     min_helpful_chars: int = 16,
+    cache_context: Optional[Dict[str, Any]] = None,
 ) -> RunResult:
     """Score precomputed samples via ak.evaluate with response-digest DiskCache isolation."""
-    cfg = RunConfig(
-        extra={
-            "checkpoint_id": checkpoint_id,
-            "samples_digest": _samples_digest(samples),
-            "min_helpful_chars": int(min_helpful_chars),
-            "scorer_schema": "stage4_strat_v2",
-        }
-    )
+    extra_cfg: Dict[str, Any] = {
+        "checkpoint_id": checkpoint_id,
+        "samples_digest": _samples_digest(samples),
+        "min_helpful_chars": int(min_helpful_chars),
+        "n_examples": len(samples),
+        "scorer_schema": "stage4_strat_v2",
+    }
+    if cache_context:
+        extra_cfg.update(cache_context)
+    cfg = RunConfig(extra=extra_cfg)
     return ak.evaluate(list(samples), model="precomputed", scorers=list(scorers_list), config=cfg)
 
 
@@ -1041,14 +1069,14 @@ def build_roi_comparison_table(
             "benign_over_refusal_rate": m["benign_over_refusal_rate"],
             "benign_helpfulness_rate": m["benign_helpfulness_rate"],
             "selectivity_gap": m["selectivity_gap"],
-            "redteam_attack_pass_rate": rt["attack_pass_rate"],
+            "redteam_attack_pass_rate": rt.get("attack_pass_rate", 0.0),
         }
         rows.append(row)
         md_lines.append(
             f"| `{ckpt_id}` | {mod_s} | {frz_s} | {blk_s} | "
             f"{m['attack_refusal_rate']:.1%} | {m['benign_over_refusal_rate']:.1%} | "
             f"{m['benign_helpfulness_rate']:.1%} | {m['selectivity_gap']:+.3f} | "
-            f"{rt['attack_pass_rate']:.1%} |"
+            f"{rt.get('attack_pass_rate', 0.0):.1%} |"
         )
     return rows, "\n".join(md_lines) + "\n"
 
@@ -1062,9 +1090,11 @@ def _phase1_generate_for_checkpoint(
     model_revision: Optional[str],
     seed: int,
     generations_dir: Path,
+    perf_out: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Load one checkpoint, run greedy ak.generate + RedTeamRunner, save JSONL, unload VRAM."""
     model_obj = _resolve_checkpoint_model(spec, profile)
+    tok = getattr(model_obj, "_tok", None)
     try:
         if profile.batch_size > 1:
             _ensure_left_padding(model_obj)
@@ -1082,7 +1112,9 @@ def _phase1_generate_for_checkpoint(
                 extra={"ckpt_id": ckpt_id, "seed": int(seed)},
             ),
         )
+        t0 = time.perf_counter()
         generated_samples = ak.generate(list(combined_samples), model_obj, config=run_cfg)
+        wall_time_s = round(time.perf_counter() - t0, 4)
         redteam_res = run_redteam_suite(
             model_obj,
             ckpt_id,
@@ -1095,6 +1127,23 @@ def _phase1_generate_for_checkpoint(
             model_obj.unload()
         del model_obj
         _release_vram()
+
+    total_output_tokens = 0
+    for gen_s in generated_samples:
+        text = str(gen_s.actual_output or "")
+        if tok is not None and hasattr(tok, "encode"):
+            total_output_tokens += len(tok.encode(text, add_special_tokens=False))
+        else:
+            total_output_tokens += len(text.split())
+    if perf_out is not None:
+        perf_out.update(
+            {
+                "wall_time_s": wall_time_s,
+                "mean_latency_ms": round((wall_time_s * 1000.0) / max(len(combined_samples), 1), 2),
+                "total_output_tokens": int(total_output_tokens),
+                "tokens_per_sec": round(total_output_tokens / max(wall_time_s, 1e-6), 2),
+            }
+        )
 
     records: List[Dict[str, Any]] = []
     for src_s, gen_s in zip(combined_samples, generated_samples):
@@ -1196,6 +1245,13 @@ def run_stage4(
                     token=os.getenv("HF_TOKEN") or None,
                 )
                 specs = _resolve_checkpoint_specs_from_stage3(model_name, m_dir_path, r_dir_path)
+            ckpt2_dir = Path(str(specs["checkpoint_2_global_safetune"]).removeprefix("hf:"))
+            ckpt3_dir = Path(str(specs["checkpoint_3_surgical_ctheta"]).removeprefix("hf:"))
+            if not (r_dir_path / "repair_summary.json").is_file() or not ckpt2_dir.is_dir() or not ckpt3_dir.is_dir():
+                raise FileNotFoundError(
+                    f"Stage 3 checkpoints or repair_summary.json still missing after --hydrate-hf from {hf_repo} "
+                    f"(checked {r_dir_path}, {ckpt2_dir}, {ckpt3_dir})."
+                )
     ckpt_order = [cid for cid in CHECKPOINT_IDS if cid in specs] + [
         cid for cid in specs if cid not in CHECKPOINT_IDS
     ]
@@ -1203,6 +1259,7 @@ def run_stage4(
     # Phase 1: Serialized greedy generation & RedTeamRunner (1 model in VRAM at a time)
     records_by_ckpt: Dict[str, List[Dict[str, Any]]] = {}
     redteam_by_ckpt: Dict[str, Dict[str, Any]] = {}
+    perf_by_ckpt: Dict[str, Dict[str, Any]] = {}
     ckpt_revisions: Dict[str, Optional[str]] = {}
     for ckpt_id in ckpt_order:
         spec = specs[ckpt_id]
@@ -1210,6 +1267,7 @@ def run_stage4(
             resolve_model_revision(spec) if isinstance(spec, str) else model_revision
         ) or model_revision
         ckpt_revisions[ckpt_id] = ckpt_rev
+        ckpt_perf: Dict[str, Any] = {}
         records, rt_res = _phase1_generate_for_checkpoint(
             ckpt_id=ckpt_id,
             spec=spec,
@@ -1218,9 +1276,11 @@ def run_stage4(
             model_revision=ckpt_rev,
             seed=seed,
             generations_dir=generations_dir,
+            perf_out=ckpt_perf,
         )
         records_by_ckpt[ckpt_id] = records
         redteam_by_ckpt[ckpt_id] = rt_res
+        perf_by_ckpt[ckpt_id] = CheckpointPerfSchema.model_validate(ckpt_perf).model_dump()
 
     redteam_path = out_dir / "redteam_report.json"
     redteam_path.write_text(json.dumps(redteam_by_ckpt, indent=2, default=str) + "\n", encoding="utf-8")
@@ -1254,17 +1314,25 @@ def run_stage4(
         harmful_digests[ckpt_id] = h_digest
         benign_digests[ckpt_id] = b_digest
 
+        eval_cache_ctx = {
+            "model_revision": ckpt_revisions.get(ckpt_id) or "",
+            "dtype": profile.dtype,
+            "device": profile.device,
+            "max_new_tokens": int(profile.max_new_tokens),
+        }
         h_run = evaluate_precomputed_split(
             h_eval_samples,
             harmful_scorers,
             checkpoint_id=ckpt_id,
             min_helpful_chars=min_helpful_chars,
+            cache_context=eval_cache_ctx,
         )
         b_run = evaluate_precomputed_split(
             b_eval_samples,
             benign_scorers,
             checkpoint_id=ckpt_id,
             min_helpful_chars=min_helpful_chars,
+            cache_context=eval_cache_ctx,
         )
         h_run.save(str(out_dir / f"run_result_{ckpt_id}_harmful.json"), write_provenance=False)
         b_run.save(str(out_dir / f"run_result_{ckpt_id}_benign.json"), write_provenance=False)
@@ -1273,6 +1341,7 @@ def run_stage4(
             "model_revision": ckpt_revisions.get(ckpt_id),
             "metrics": summarize_checkpoint_metrics(h_run, b_run),
             "redteam": redteam_by_ckpt[ckpt_id],
+            "performance": perf_by_ckpt.get(ckpt_id, {}),
         }
         harmful_callables.append(_make_precomputed_callable(ckpt_id, harmful_samples, resp_by_id))
         benign_callables.append(_make_precomputed_callable(ckpt_id, benign_samples, resp_by_id))
@@ -1360,6 +1429,7 @@ def run_stage4(
     )
     write_provenance(str(out_dir), prov_doc)
 
+    eval_summary = Stage4EvalSummarySchema.model_validate(eval_summary).model_dump()
     summary_path = out_dir / "eval_summary.json"
     summary_path.write_text(json.dumps(eval_summary, indent=2, default=str) + "\n", encoding="utf-8")
 

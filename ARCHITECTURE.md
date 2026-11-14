@@ -12,10 +12,10 @@ flowchart TD
     D1["artifacts/stage1_dataset/calibration_100_pairs.jsonl"]
     D2["artifacts/stage1_dataset/eval_200_pairs.jsonl"]
     S2["Stage 2: src/stage2_discover.py (CircuitKIT EAP-IG)"]
-    M2["safety_circuit_surgical_submodules_scores.json (Top-4/72 Submodules, 94.44% Frozen)"]
+    M2["artifacts/stage2_circuits/safety_circuit_surgical_submodules_top4_scores.json (Top-4/72 Submodules, 94.44% Frozen)"]
     S3["Stage 3: src/stage3_repair.py (SafeTune SafeGrad + C-DeltaTheta)"]
     C1["Checkpoint 1: Base Model"]
-    C2["Checkpoint 2: Global SafeTune Merged + Unmerged LoRA"]
+    C2["Checkpoint 2: Global SafeTune Merged"]
     C3["Checkpoint 3: Surgical C-DeltaTheta Transplant"]
     S4["Stage 4: src/stage4_eval.py (AuditKIT Decoupled 3-Checkpoint Eval)"]
     RUN["scripts/run_hf_jobs.sh (HF Jobs l4x1 / --low-vram-t4 Runner)"]
@@ -44,8 +44,8 @@ flowchart TD
 | :--- | :--- | :--- |
 | `src/stage1_curate.py` | Stage 1 Curation (`ContrastPair`, `generate_300_pairs`, `run_quality_gate`, `export_provenance_bundle`) | Deterministic lexical-twin generation (300 pairs across 4 languages x 3 threat categories), deduplication/lexical gates, SHA-256 checksums, `lexsi.provenance/1`. |
 | `src/stage2_discover.py` | Stage 2 Mechanistic Discovery (`run_stage2`, `equalize_pair_texts`, `calibrate_answer_tokens`, `filter_pairs_by_baseline_margin`, `compute_submodule_surgical_mask`) | Single-BOS chat-template handling, within-pair token length equalization, 16-pair token calibration, `delta_m > 0.5` preflight filter, `eap-ig` node attribution, 4-pillar faithfulness eval, KL diagnostic, and `4/72` (`94.44%` frozen) surgical mask export. |
-| `src/stage3_repair.py` | Stage 3 Hardening & Transplant (`run_stage3`, `run_safegrad_lora_harden`, `run_ctheta_sweep_and_transplant`, `verify_surgical_bit_identity`) | Single-wrap LoRA `SafeGradHFTrainer`, CPU `bfloat16` reference offload for T4, `use_cache=True` restore before merge, 3-input `apply_ctheta` `alpha` sweep, bit-for-bit frozen weight audit, dual HF Hub Phase A/B upload. |
-| `src/stage4_eval.py` | Stage 4 Security Audit (`run_stage4`, `phase1_generate_for_checkpoint`, `build_harmful_scorers`, `build_benign_scorers`, `run_redteam_suite`, `build_roi_comparison_table`) | Decoupled Phase 1 greedy generation + VRAM unload -> Phase 2 precomputed AuditKIT scoring, `DiskCache` key isolation via `_spec_cache_key`, `RedTeamRunner` probes, optional WildGuard/`lm-eval`, paired bootstrap & ROI tables. |
+| `src/stage3_repair.py` | Stage 3 Hardening & Transplant (`run_stage3`, `run_safegrad_lora_harden`, `run_ctheta_sweep_and_transplant`, `verify_surgical_bit_identity`) | Single-wrap LoRA `SafeGradHFTrainer`, CPU `bfloat16` reference offload for T4/L4, `use_cache=True` restore before merge, `sweep_ctheta_strength` + `apply_ctheta_from_state_dicts` `alpha` sweep, bit-for-bit frozen weight audit, dual HF Hub Phase A/B upload. |
+| `src/stage4_eval.py` | Stage 4 Security Audit (`run_stage4`, `_phase1_generate_for_checkpoint`, `build_harmful_scorers`, `build_benign_scorers`, `run_redteam_suite`, `build_roi_comparison_table`) | Decoupled Phase 1 greedy generation + VRAM unload -> Phase 2 precomputed AuditKIT scoring, `DiskCache` key isolation via `_spec_cache_key`, `RedTeamRunner` probes, optional WildGuard/`lm-eval`, paired bootstrap & ROI tables. |
 | `tests/` | GitNexus `Tests` community (`156` symbols, `83%` cohesion) | End-to-end CPU `"gpt2"` + tiny `cohere2` verification across `test_env.py`, `test_stage1.py`..`test_stage4.py`. |
 
 ## 3. Top GitNexus Execution Flows Traced
@@ -63,7 +63,7 @@ flowchart TD
 
 ## 4. Hub Symbols & Blast Radius (`gitnexus impact`)
 
-- `run_stage2` (`src/stage2_discover.py:1576`): called by `main` + 6 Stage 2 tests (`21` outgoing helper dependencies; top-level Stage 2 orchestrator).
+- `run_stage2` (`src/stage2_discover.py:1579`): called by `main` + 6 Stage 2 tests (`21` outgoing helper dependencies; top-level Stage 2 orchestrator).
 - `resolve_runtime_profile` (`src/stage2_discover.py:120`): `3` upstream dependents (`run_stage2`, `main`, module entrypoint), affects `4` processes, risk `LOW`.
 - `run_stage3` (`src/stage3_repair.py`) & `run_stage4` (`src/stage4_eval.py`): `2` upstream dependents each (`main` + module), `4` affected processes each, risk `LOW`.
 - `verify_hf_auth`: implemented independently across Stages 2, 3, and 4 (`impactedCount=3`, risk `LOW` each) to fail fast on missing/invalid `HF_TOKEN` before GPU compute.

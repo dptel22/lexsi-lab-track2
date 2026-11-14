@@ -596,3 +596,49 @@ def test_stage3_t4_float16_ref_offload_use_cache_and_hydrate_hf(tmp_path, monkey
     assert ckpt2_cfg.use_cache is True
     assert ckpt3_cfg.use_cache is True
 
+
+def test_stage3_hydrates_missing_dataset_before_load(tmp_path, monkeypatch) -> None:
+    import sys
+    from unittest.mock import patch
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage3_repair as s3
+
+    ckpt = _create_tiny_cohere2_checkpoint(tmp_path / "ckpt_ds", n_layers=2)
+    missing_ds = tmp_path / "stage1_dataset" / "calibration_50_pairs.jsonl"
+    missing_mask = tmp_path / "stage2_circuits" / "safety_circuit_surgical_submodules_top2_scores.json"
+
+    def _fake_dl(**kwargs):
+        assert set(kwargs["allow_patterns"]) == {"stage1_dataset/**", "stage2_circuits/**"}
+        missing_ds.parent.mkdir(parents=True, exist_ok=True)
+        missing_ds.write_text("\n".join(json.dumps(r) for r in _sample_pairs(8)) + "\n", encoding="utf-8")
+        _write_stage2_submodule_mask(
+            missing_mask,
+            model_name=str(ckpt),
+            selected_submodules=[(0, "mlp")],
+            n_layers=2,
+        )
+        return str(tmp_path)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with patch.object(s3, "snapshot_download", side_effect=_fake_dl, create=True) as dl_spy:
+        summary = s3.run_stage3(
+            model_name=str(ckpt),
+            dataset_path=missing_ds,
+            circuit_info_path=missing_mask,
+            output_dir=tmp_path / "out_ds",
+            models_dir=tmp_path / "models_ds",
+            dtype="float32",
+            device="cpu",
+            max_steps=1,
+            batch_size=1,
+            alpha_grid=[1.0],
+            max_new_tokens=6,
+            hydrate_hf=True,
+            upload_hf=False,
+        )
+    dl_spy.assert_called_once()
+    assert Path(summary["artifacts"]["checkpoint_3_surgical_dir"]).is_dir()
+

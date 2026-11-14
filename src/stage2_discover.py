@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 from dotenv import load_dotenv
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 
 from circuitkit.api import (
     _eap_kl_divergence,
@@ -920,7 +920,10 @@ def apply_surgical_layer_cap(
         ),
     )
 
-    if max_surgical_layers is not None and max_surgical_layers > 0 and len(ranked_layers) > max_surgical_layers:
+    if max_surgical_layers is not None and int(max_surgical_layers) < 1:
+        raise ValueError(f"max_surgical_layers must be >= 1 or None, got {max_surgical_layers}")
+
+    if max_surgical_layers is not None and len(ranked_layers) > max_surgical_layers:
         kept_layers = sorted(ranked_layers[:max_surgical_layers])
     else:
         kept_layers = sorted(raw_layers)
@@ -1591,6 +1594,7 @@ def run_stage2(
     n_stability_runs: int = 3,
     ig_steps: int = 3,
     low_vram_t4: bool = False,
+    hydrate_hf: bool = False,
     upload_hf: bool = False,
     hf_repo: str = DEFAULT_HF_REPO,
     stem: str = "safety_circuit",
@@ -1619,6 +1623,22 @@ def run_stage2(
         chat_template_mode = "off"
         max_seq_len = 128
         batch_size = 1
+
+    ds_path_obj = Path(dataset_path)
+    if hydrate_hf and not ds_path_obj.exists():
+        hydrate_root = (
+            ds_path_obj.parent.parent
+            if ds_path_obj.parent.name == "stage1_dataset"
+            else ds_path_obj.parent
+        )
+        hydrate_root.mkdir(parents=True, exist_ok=True)
+        snapshot_download(
+            repo_id=hf_repo,
+            repo_type="dataset",
+            local_dir=str(hydrate_root),
+            allow_patterns=["stage1_dataset/**"],
+            token=os.getenv("HF_TOKEN") or None,
+        )
 
     pairs = load_contrast_pairs(dataset_path)
     n_examples_eff = min(len(pairs), n_examples) if n_examples is not None else len(pairs)
@@ -1718,6 +1738,7 @@ def run_stage2(
         "output_path": str(artifact_pt),
     }
 
+    _release_vram()
     discover_circuit(config, _model=model)
     if scores_json.exists():
         raw_blob = json.loads(scores_json.read_text(encoding="utf-8"))
@@ -2031,6 +2052,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Force 16 GB T4 compatibility mode (chat_template_mode=off, max_seq_len=128, batch_size=1, aggressive cache clearing).",
     )
+    parser.add_argument(
+        "--hydrate-hf",
+        action="store_true",
+        default=False,
+        help="Download missing Stage 1 dataset from HF Hub before running discovery.",
+    )
     parser.add_argument("--upload-hf", action="store_true", default=False, help="Upload artifacts to HF Hub.")
     parser.add_argument("--hf-repo", default=DEFAULT_HF_REPO, help="Target Hugging Face repository.")
     return parser
@@ -2057,6 +2084,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         n_stability_runs=args.n_stability_runs,
         ig_steps=args.ig_steps,
         low_vram_t4=args.low_vram_t4,
+        hydrate_hf=args.hydrate_hf,
         upload_hf=args.upload_hf,
         hf_repo=args.hf_repo,
         stem=args.stem,

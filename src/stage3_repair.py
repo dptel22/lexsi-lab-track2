@@ -326,7 +326,7 @@ def resolve_stage3_runtime_profile(
     resolved_dtype = _resolve_auto_dtype(model_name, dtype, resolved_device)
 
     has_template = bool(getattr(tokenizer, "chat_template", None))
-    templated = has_template and not is_gpt2
+    templated = has_template and not is_gpt2 and not low_vram_t4
 
     eff_batch = 1 if low_vram_t4 else max(1, int(batch_size))
     eff_ref_offload = True if low_vram_t4 else bool(ref_offload_cpu)
@@ -813,7 +813,7 @@ def run_ctheta_sweep_and_transplant(
     tdtype = _torch_dtype(profile.dtype)
 
     # Restore candidate_model strictly back to Checkpoint 1 base_sd in existing allocation
-    candidate_model.load_state_dict({k: v.to(device=dev, dtype=tdtype) for k, v in base_sd.items()}, strict=True)
+    candidate_model.load_state_dict(base_sd, strict=True)
 
     pos_proxy = _StateDictModuleProxy(ckpt2_sd)
     neg_proxy = _StateDictModuleProxy(base_sd)
@@ -866,7 +866,7 @@ def run_ctheta_sweep_and_transplant(
             best_alpha = a
 
     # Guarantee candidate_model starts identically from base_sd, then apply winning C-ΔΘ transplant
-    candidate_model.load_state_dict({k: v.to(device=dev, dtype=tdtype) for k, v in base_sd.items()}, strict=True)
+    candidate_model.load_state_dict(base_sd, strict=True)
     repaired_model = apply_ctheta_from_state_dicts(
         candidate_model,
         ckpt2_sd,
@@ -876,6 +876,8 @@ def run_ctheta_sweep_and_transplant(
         layer_subset=layer_subset,
         target_modules=target_modules,
     )
+    if hasattr(repaired_model, "config"):
+        repaired_model.config.use_cache = True
 
     ckpt3_sd = {k: v.detach().cpu().clone() for k, v in repaired_model.state_dict().items()}
     audit = verify_surgical_bit_identity(base_sd, ckpt3_sd, circuit_info)
@@ -883,6 +885,8 @@ def run_ctheta_sweep_and_transplant(
         raise AssertionError(
             f"Surgical C-ΔΘ violated bit-identity outside mask on keys: {audit['unmasked_violations'][:5]}"
         )
+    del ckpt3_sd
+    gc.collect()
 
     ctheta_params = {
         "method": "ctheta.apply_ctheta_from_state_dicts",
@@ -978,26 +982,37 @@ def run_stage3(
         hf_user = verify_hf_auth()
         logger.info("Verified Hugging Face Hub auth before Stage 3 compute (user=%s).", hf_user)
 
+    ds_path_obj = Path(dataset_path)
+    ci_path_obj = Path(circuit_info_path)
+    if hydrate_hf:
+        patterns: List[str] = []
+        if not ds_path_obj.exists():
+            patterns.append("stage1_dataset/**")
+        if not ci_path_obj.exists():
+            patterns.append("stage2_circuits/**")
+        if patterns:
+            hydrate_root = (
+                ci_path_obj.parent.parent
+                if ci_path_obj.parent.name == "stage2_circuits"
+                else (
+                    ds_path_obj.parent.parent
+                    if ds_path_obj.parent.name == "stage1_dataset"
+                    else ci_path_obj.parent
+                )
+            )
+            hydrate_root.mkdir(parents=True, exist_ok=True)
+            snapshot_download(
+                repo_id=hf_repo,
+                repo_type="dataset",
+                local_dir=str(hydrate_root),
+                allow_patterns=patterns,
+                token=os.getenv("HF_TOKEN") or None,
+            )
+
     pairs = load_calibration_pairs(dataset_path)
     train_benign_qa, train_safety_qa, val_pairs = build_stage3_sft_and_safety_splits(
         pairs, val_fraction=val_fraction, seed=seed
     )
-
-    ci_path_obj = Path(circuit_info_path)
-    if hydrate_hf and not ci_path_obj.exists():
-        hydrate_root = (
-            ci_path_obj.parent.parent
-            if ci_path_obj.parent.name == "stage2_circuits"
-            else ci_path_obj.parent
-        )
-        hydrate_root.mkdir(parents=True, exist_ok=True)
-        snapshot_download(
-            repo_id=hf_repo,
-            repo_type="dataset",
-            local_dir=str(hydrate_root),
-            allow_patterns=["stage2_circuits/**"],
-            token=os.getenv("HF_TOKEN") or None,
-        )
     if not ci_path_obj.exists():
         raise FileNotFoundError(f"Stage 2 circuit mask not found: {ci_path_obj}")
     circuit_info = load_circuit_info_from_file(str(ci_path_obj))
