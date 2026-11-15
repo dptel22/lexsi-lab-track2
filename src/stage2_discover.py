@@ -44,9 +44,32 @@ from circuitkit.provenance import (
     read_provenance,
     write_provenance,
 )
-from circuitkit.tasks._chat import VALID_MODES, _has_chat_template, resolve_chat_template, wrap_prompt
+from circuitkit.tasks._chat import VALID_MODES, resolve_chat_template, wrap_prompt
 from circuitkit.tasks import registry as _task_registry
 from circuitkit.tasks.registry import is_task_registered, register_task
+
+
+def _robust_has_chat_template(obj: Any) -> bool:
+    """Return True iff obj carries a non-empty chat_template string or dict."""
+    template = getattr(obj, "chat_template", None)
+    if isinstance(template, str):
+        return template.strip() != ""
+    if isinstance(template, dict):
+        default_tmpl = template.get("default")
+        if isinstance(default_tmpl, str) and default_tmpl.strip() != "":
+            return True
+        return any(isinstance(v, str) and v.strip() != "" for v in template.values())
+    return False
+
+
+# Defensive runtime monkey-patch: ensure circuitkit handles dict chat_template even on unpatched upstream installs
+try:
+    import circuitkit.tasks._chat as _ck_chat
+
+    _ck_chat._has_chat_template = _robust_has_chat_template
+except Exception:
+    pass
+_has_chat_template = _robust_has_chat_template
 
 logger = logging.getLogger(__name__)
 

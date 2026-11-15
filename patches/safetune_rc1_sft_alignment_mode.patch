@@ -1,0 +1,65 @@
+diff --git a/src/safetune/interventions/harden/safegrad.py b/src/safetune/interventions/harden/safegrad.py
+index 526fa0e..e25834a 100644
+--- a/src/safetune/interventions/harden/safegrad.py
++++ b/src/safetune/interventions/harden/safegrad.py
+@@ -65,6 +65,9 @@ except Exception as _e:  # pragma: no cover
+     _SAFEGRAD_IMPORT_ERROR = _e
+ 
+ 
++VALID_ALIGNMENT_LOSS_MODES = ("auto", "sft", "kl")
++
++
+ class SafeGradConfig(TrainingArguments if _TRAINER_IMPORT_ERROR is None else object):  # type: ignore[misc]
+     """``TrainingArguments`` subclass for SafeGrad — no extra fields required.
+ 
+@@ -119,6 +122,7 @@ class SafeGradHFTrainer(Trainer if _TRAINER_IMPORT_ERROR is None else object):
+         reference_model: Optional[Any] = None,
+         rho: float = 1.0,
+         kl_temperature: float = 1.0,
++        alignment_loss_mode: str = "auto",
+         **kwargs: Any,
+     ) -> None:
+         if _TRAINER_IMPORT_ERROR is not None:
+@@ -133,6 +137,11 @@ class SafeGradHFTrainer(Trainer if _TRAINER_IMPORT_ERROR is None else object):
+             raise ImportError(
+                 "safetune.core.optim.safegrad is unavailable"
+             ) from _SAFEGRAD_IMPORT_ERROR
++        if alignment_loss_mode not in VALID_ALIGNMENT_LOSS_MODES:
++            raise ValueError(
++                f"alignment_loss_mode must be one of {VALID_ALIGNMENT_LOSS_MODES}, "
++                f"got {alignment_loss_mode!r}"
++            )
+ 
+         super().__init__(*args, **kwargs)
+         if int(getattr(self.args, "gradient_accumulation_steps", 1) or 1) > 1:
+@@ -149,6 +158,7 @@ class SafeGradHFTrainer(Trainer if _TRAINER_IMPORT_ERROR is None else object):
+         )
+         self._rho = float(rho)
+         self._kl_temperature = float(kl_temperature)
++        self._alignment_loss_mode = alignment_loss_mode
+ 
+         # Frozen, pre-aligned reference model (theta_0). Kept in eval mode with
+         # gradients disabled so no graph flows back into it.
+@@ -223,7 +233,12 @@ class SafeGradHFTrainer(Trainer if _TRAINER_IMPORT_ERROR is None else object):
+                 )
+                 return None
+ 
+-            if self._reference_model is not None and safegrad_kl_alignment_loss is not None:
++            mode = getattr(self, "_alignment_loss_mode", "auto")
++            if (
++                mode != "sft"
++                and self._reference_model is not None
++                and safegrad_kl_alignment_loss is not None
++            ):
+                 # Paper's KL-divergence alignment loss against frozen theta_0.
+                 student_out = model(**prepared)
+                 with torch.no_grad():
+@@ -240,7 +255,7 @@ class SafeGradHFTrainer(Trainer if _TRAINER_IMPORT_ERROR is None else object):
+                     temperature=self._kl_temperature,
+                 )
+             else:
+-                # SFT-loss proxy alignment signal.
++                # Supervised refusal SFT alignment signal (or reference-free fallback).
+                 align_loss = model(**prepared).loss
+ 
+             if align_loss is None or not getattr(align_loss, "requires_grad", False):

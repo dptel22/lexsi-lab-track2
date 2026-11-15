@@ -1,0 +1,28 @@
+diff --git a/src/circuitkit/tasks/_chat.py b/src/circuitkit/tasks/_chat.py
+index 3349336..bdb653f 100644
+--- a/src/circuitkit/tasks/_chat.py
++++ b/src/circuitkit/tasks/_chat.py
+@@ -60,12 +60,19 @@ _AUTO_DETECTED_SEEN: set[str] = set()
+ def _has_chat_template(obj: Any) -> bool:
+     """Return True iff ``obj`` carries a non-empty ``chat_template``.
+ 
+-    A ``chat_template`` of ``None``, ``""`` or whitespace-only text does not
+-    count: some tokenizers ship a stray/trivial value that must not be
+-    mistaken for a genuine chat model.
++    Accepts both string templates and Hugging Face multi-template dicts (e.g.
++    ``CohereTokenizerFast.chat_template`` mapping ``"default"`` to Jinja).
++    Empty or whitespace-only values are rejected.
+     """
+     template = getattr(obj, "chat_template", None)
+-    return isinstance(template, str) and template.strip() != ""
++    if isinstance(template, str):
++        return template.strip() != ""
++    if isinstance(template, dict):
++        default_tmpl = template.get("default")
++        if isinstance(default_tmpl, str) and default_tmpl.strip() != "":
++            return True
++        return any(isinstance(v, str) and v.strip() != "" for v in template.values())
++    return False
+ 
+ 
+ def _log_auto_detection(name: str) -> None:

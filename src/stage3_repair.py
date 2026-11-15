@@ -40,6 +40,62 @@ except Exception:  # pragma: no cover - optional telemetry dependency
 
 logger = logging.getLogger(__name__)
 
+# Defensive runtime monkey-patch: ensure SafeGradHFTrainer supports alignment_loss_mode="sft" even on unpatched upstream installs
+def _patch_safegrad_hf_trainer() -> None:
+    try:
+        import safetune.interventions.harden.safegrad as _sg_mod
+
+        if not hasattr(_sg_mod, "VALID_ALIGNMENT_LOSS_MODES"):
+            _sg_mod.VALID_ALIGNMENT_LOSS_MODES = ("auto", "sft", "kl")
+
+        orig_init = _sg_mod.SafeGradHFTrainer.__init__
+        orig_alignment_gradient = _sg_mod.SafeGradHFTrainer._alignment_gradient
+
+        def _defensive_init(self, *args, alignment_loss_mode: str = "auto", **kwargs):
+            if alignment_loss_mode not in ("auto", "sft", "kl"):
+                raise ValueError(
+                    f"alignment_loss_mode must be one of ('auto', 'sft', 'kl'), got {alignment_loss_mode!r}"
+                )
+            self._alignment_loss_mode = alignment_loss_mode
+            try:
+                orig_init(self, *args, alignment_loss_mode=alignment_loss_mode, **kwargs)
+            except TypeError:
+                orig_init(self, *args, **kwargs)
+            self._alignment_loss_mode = alignment_loss_mode
+
+        def _defensive_alignment_gradient(self, model: Any, safety_batch: Any):
+            mode = getattr(self, "_alignment_loss_mode", "auto")
+            if mode == "sft":
+                params = self._trainable_params(model)
+                if not params:
+                    return None
+                prepared = self._prepare_batch(safety_batch, model)
+                if not isinstance(prepared, dict):
+                    return None
+                align_loss = model(**prepared).loss
+                if align_loss is None or not getattr(align_loss, "requires_grad", False):
+                    return None
+                g_align = torch.autograd.grad(
+                    align_loss,
+                    params,
+                    retain_graph=False,
+                    create_graph=False,
+                    allow_unused=True,
+                )
+                return [
+                    (g.detach() if g is not None else torch.zeros_like(p))
+                    for g, p in zip(g_align, params)
+                ]
+            return orig_alignment_gradient(self, model, safety_batch)
+
+        _sg_mod.SafeGradHFTrainer.__init__ = _defensive_init
+        _sg_mod.SafeGradHFTrainer._alignment_gradient = _defensive_alignment_gradient
+    except Exception as exc:
+        logger.debug("SafeGradHFTrainer monkey-patch skipped: %s", exc)
+
+
+_patch_safegrad_hf_trainer()
+
 PROVENANCE_FILENAME = "lexsi_provenance.json"
 DEFAULT_MODEL = "CohereLabs/tiny-aya-fire"
 DEFAULT_DATASET = Path("artifacts/stage1_dataset/calibration_100_pairs.jsonl")
