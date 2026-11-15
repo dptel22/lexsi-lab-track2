@@ -143,7 +143,7 @@ fi
 
 # Mount /workspace read-only cleanly, copy only runtime code/artifacts (excluding .venv/.env) to /tmp/lexsi, install vendored kits, and execute stage.
 PY312_SETUP="python -m pip install --no-cache-dir --quiet uv && uv venv /tmp/py312 --python 3.12 --seed && uv pip install --python /tmp/py312/bin/python --quiet torch ./vendor/CircuitKIT ./vendor/SafeTune ./vendor/AuditKIT python-dotenv huggingface_hub datasets accelerate peft trl"
-CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && mkdir -p /tmp/lexsi && cp -a /workspace/src /workspace/vendor /workspace/scripts /workspace/pyproject.toml /tmp/lexsi/ && if [ -d /workspace/artifacts ]; then cp -a /workspace/artifacts /tmp/lexsi/; fi && cd /tmp/lexsi && ${PY312_SETUP} && /tmp/py312/bin/python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
+CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && mkdir -p /tmp/lexsi && cp -a /workspace/src /workspace/vendor /workspace/scripts /workspace/pyproject.toml /tmp/lexsi/ && if [ -d /workspace/artifacts/stage1_dataset ]; then mkdir -p /tmp/lexsi/artifacts && cp -a /workspace/artifacts/stage1_dataset /tmp/lexsi/artifacts/; fi && cd /tmp/lexsi && ${PY312_SETUP} && /tmp/py312/bin/python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
 
 HF_CMD=(
   "$HF_CLI" jobs run

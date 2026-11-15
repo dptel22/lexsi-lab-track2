@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Document Status** | Approved / Operational |
 | **Target Model** | `CohereLabs/tiny-aya-fire` (3.35B parameters, `cohere2` architecture) |
-| **Execution Hardware** | Cloud: Hugging Face Jobs (`l4x1`, NVIDIA L4 24 GB VRAM) & ZeroGPU; Local: Windows Laptop (RTX 4050 6 GB / CPU verification) |
+| **Execution Hardware** | Cloud: Hugging Face Jobs (`l40sx1` NVIDIA L40S 48 GB VRAM for Stage 2; `l4x1` NVIDIA L4 24 GB VRAM for Stages 3–4) & ZeroGPU; Local: Windows Laptop (RTX 4050 6 GB / CPU verification) |
 | **Target Repositories** | Dataset: [`soapyyapps/circuit-kavach-cyber-codemixed`](https://huggingface.co/datasets/soapyyapps/circuit-kavach-cyber-codemixed) <br> Space: [`soapyyapps/circuit-kavach-aya`](https://huggingface.co/spaces/soapyyapps/circuit-kavach-aya) |
 | **Pipeline Scope** | Stages 1–4 (Curation, EAP-IG Discovery, SafeTune Surgical Repair, AuditKIT Evaluation) |
 
@@ -16,9 +16,9 @@
 - **Context / Initial Setup:** The local development workstation is a Windows laptop with an NVIDIA RTX 4050 Laptop GPU (6,141 MB total VRAM) and a CPU-only PyTorch `.venv` installation.
 - **Problem / Failure Encountered:** Loading 3.35B parameter weights in `bfloat16` requires ~6.7 GB static memory before activations, gradients, or `CircuitKIT` hooks are attached. Local execution causes immediate out-of-memory (OOM) allocation failures.
 - **Decision / Rationale:** Enforce a strict hardware boundary:
-  1. *Local Verification:* Execute all 54 pytest unit and integration tests strictly on CPU using `"gpt2"` (`float32`) and synthetic 2-layer `cohere2` checkpoints.
-  2. *Cloud Execution:* Offload all 3.35B parameter training, attribution, and evaluation runs to Hugging Face Jobs using the `l4x1` flavor (NVIDIA L4, 24 GB VRAM, `bfloat16`).
-- **Outcome:** Zero OOM crashes on the local host; 100% test pass rate across all 54 test suites on CPU.
+  1. *Local Verification:* Execute all 58 pytest unit and integration tests strictly on CPU using `"gpt2"` (`float32`) and synthetic 2-layer `cohere2` checkpoints.
+  2. *Cloud Execution:* Offload Stage 2 (`l40sx1` 48 GB VRAM for templated `HookedTransformer` EAP-IG) and Stages 3–4 (`l4x1` 24 GB VRAM, `bfloat16`) to Hugging Face Jobs.
+- **Outcome:** Zero OOM crashes on the local host; 100% test pass rate across all 58 tests on CPU.
 
 ---
 
@@ -49,23 +49,19 @@
 
 ### Decision 3.1: Token Length Equalization & Margin Preflight
 - **Context / Initial Setup:** Stage 2 computes Edge Attribution Patching via Integrated Gradients (EAP-IG) over 100 clean/corrupted contrast pairs across English, Hindi-English, Gujarati-English, and Kannada-English code-mixed registers.
-- **Problem / Failure Encountered:** Unpadded contrast pairs with differing token counts cause token positional drift in causal attention masks, distorting downstream edge attribution matrices.
-- **Decision / Rationale:** Right-pad all contrast pairs within each sample to identical token lengths before running EAP-IG attribution, and filter out pairs where the pre-attribution logit margin $\Delta m = m(\text{clean}) - m(\text{corrupt})$ falls below $0.5$.
-- **Outcome:** Attribution stability achieved on `l4x1` (`6af80c1423985fb9cd817385`), yielding a Mean Jaccard similarity of 0.9788, Spearman $\rho$ of 0.9997, and isolating 4 of 72 submodules (94.44% frozen parameter retention).
+- **Problem / Failure Encountered:** Unpadded contrast pairs with differing token counts cause token positional drift in causal attention masks. In addition, v1 `tiny-aya-fire` discovery failed to recognize `dict`-typed `CohereTokenizerFast.chat_template` (`templated=False`), calibrated on un-templated tokens (`"ploit"`/`" pare"`), and then hit L4 (`22.03 GiB`) OOM once `templated=True` added Cohere's ~360-token contextual safety preamble (`n_pos ≈ 375`, pushing `use_attn_result` `(z * w)` + autograd graph to `21.8–27.1 GiB`).
+- **Decision / Rationale:** Right-pad contrast pairs within each sample to identical token lengths, accept `dict`-typed `chat_template` in `_has_chat_template` without gating mock tokenizers, weight `"en"` preflight rows `3.0x` inside `calibrate_answer_tokens`, filter pairs with $\Delta m > 0.5$, and allocate `l40sx1` (`48 GB` VRAM) for Stage 2 (`6af96d1629dd05ff03686a08`).
+- **Outcome:** Stage 2 (`6af96d1629dd05ff03686a08`, `51m49s` on `l40sx1`) ran with `templated=true`, calibrated on `" sorry"` (`40449`) vs. `" when"` (`1434`, `logit_diff_gap=16.21`), retained `99/100` pairs (`en=25`, `gu_en=25`, `hi_en=25`, `kn_en=24`), achieved `mean_jaccard=0.9683`, `mean_spearman=0.9998`, `ablation_score=0.6549`, and isolated `layers.0.mlp`, `layers.16.self_attn`, `layers.21.self_attn`, and `layers.20.self_attn` (`94.44%` projection blocks frozen).
 
 ---
 
 ## 4. Stage 3 Circuit Repair (SafeTune)
 
-### Decision 4.1: Reference Model GPU Allocation vs. CPU Offload
-- **Context / Initial Setup:** Stage 3 trains a LoRA adapter on identified circuit submodules using KL-divergence distillation against a frozen reference model.
-- **Problem / Failure Encountered:** Enabling `--ref-offload-cpu` caused the reference forward pass to take 147.6 seconds per step, triggering a 60-minute timeout after only 23 of 80 steps.
-- **Decision / Rationale:** Analyzed static memory allocations on the 24 GB NVIDIA L4:
-  - Base student model (`tiny-aya-fire` 3.35B in `bf16` with LoRA): ~7.2 GB VRAM.
-  - Frozen reference model (`bf16`, `eval()`, `no_grad`): ~6.7 GB VRAM.
-  - Combined static allocation: ~13.9 GB, leaving >10 GB headroom for activations.
-  - Removed `--ref-offload-cpu`, enabled `--gradient-checkpointing`, and reduced `--batch-size` from 2 to 1 (doubling gradient steps from 80 to 160).
-- **Outcome:** Step latency dropped from 147.6 seconds to 0.99 seconds (150× speedup). Stage 3 completed 160 steps in 159.1 seconds, achieving steady convergence to a final `train_loss` of 0.8305 without gradient overflow, verified bit-identity across all 68 frozen submodules, and uploaded Checkpoints 2 and 3.
+### Decision 4.1: Supervised Refusal Surgery (`alignment_loss_mode="sft"`), CPU Reference Offload & Two-Group `AdamW`
+- **Context / Initial Setup:** Stage 3 trains a LoRA adapter via `SafeGradHFTrainer` and transplants circuit-masked deltas $\Delta\Theta$ via `C-ΔΘ`.
+- **Problem / Failure Encountered:** In v1, passing a CPU-offloaded unaligned `tiny-aya-fire` `reference_model` caused `SafeGradHFTrainer` to run KL-divergence toward the unaligned base model (ignoring `_REFUSAL_TEMPLATES` labels and worsening `gu_en`/`kn_en` refusal from `6%` to `2%`) and took `147.6 s/step` when queried on every step. Uniform `AdamW` updates across all 72 projection blocks also diluted deltas inside the 4 selected circuit submodules before masking.
+- **Decision / Rationale:** Add explicit `alignment_loss_mode: str = "auto"` (`"auto" | "sft" | "kl"`) to `SafeGradHFTrainer`, opt Stage 3 into `"sft"` (`_REFUSAL_TEMPLATES` cross-entropy loss with `rho=1.0`, `epochs=3.0`) while defaulting `ref_offload_cpu=True` (`0 GB` GPU VRAM), and partition trainable LoRA parameters via `_matched_param_keys` into a two-group `torch.optim.AdamW` (`2e-4` inside circuit vs. `0.10x` outside).
+- **Outcome:** Stage 3 (`6af97a2723985fb9cd8320bb`, `15m50s` on `l4x1`) converged in 3 epochs (`train_loss=0.7112`), raised validation `attack_refusal_rate` from `45.0%` to `95.0%` (`alpha=1.0`, `0.0%` benign over-refusal), kept `97.45%` of parameters bit-identical (`2.55%` modified across `15/291` tensors), and Stage 4 (`6af97fa323985fb9cd8325eb`, `l4x1`) verified `94.5%` held-out refusal (`+54.5 pp` over base, `p=0.000999`) with `0.0%` benign over-refusal.
 
 ---
 
@@ -99,6 +95,6 @@
 
 ## 7. Future Protocol Improvements
 
-### Observation 7.1: Asymmetric Generation Caps
-- **Observation:** In evaluation runs containing both malicious prompts and benign defensive tasks, refusals occur within the first 30 generated tokens, whereas comprehensive benign code patches require larger token allowances.
-- **Recommendation:** Future evaluation harnesses should adopt an asymmetric cap: 96 tokens for malicious prompts and 256 tokens for benign prompts, optimizing both runtime efficiency and explanatory completeness.
+### Observation 7.2: Hardware Tiering for Templated Attribution vs. LoRA Training
+- **Observation:** Enabling `tiny-aya-fire`'s `dict` chat template injects Cohere's ~360-token contextual safety preamble (~375 tokens per prompt), driving Stage 2 `HookedTransformer` `use_attn_result` autograd peak VRAM to `21.8–27.1 GiB` (OOM on `22.03 GiB` L4), whereas Stage 3 (`gradient_checkpointing=True`, `batch_size=1`, `ref_offload_cpu=True`, `alignment_loss_mode="sft"`) and Stage 4 serialized evaluation stay under `~12.5 GiB` VRAM.
+- **Recommendation:** Allocate `l40sx1` (`48 GB` VRAM) for Stage 2 circuit discovery while retaining cost-efficient `l4x1` (`24 GB` VRAM) for Stages 3 and 4.

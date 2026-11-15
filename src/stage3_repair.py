@@ -317,7 +317,7 @@ def resolve_stage3_runtime_profile(
     batch_size: int = 2,
     max_seq_len: Optional[int] = None,
     max_new_tokens: int = 128,
-    ref_offload_cpu: bool = False,
+    ref_offload_cpu: bool = True,
     gradient_checkpointing: bool = False,
     low_vram_t4: bool = False,
 ) -> Stage3RuntimeProfile:
@@ -507,15 +507,22 @@ def run_safegrad_lora_harden(
     lora_alpha: int = 32,
     lora_dropout: float = 0.05,
     lr: float = 2e-4,
-    epochs: float = 2.0,
+    epochs: float = 3.0,
     max_steps: int = -1,
-    rho: float = 0.25,
+    rho: float = 1.0,
     kl_temperature: float = 1.0,
+    circuit_info: Optional[Any] = None,
+    non_circuit_lr_scale: float = 0.10,
     seed: int = 42,
     use_trackio: bool = False,
 ) -> Dict[str, Any]:
     """Wrap base_model ONCE in LoRA, train via SafeGradHFTrainer, save unmerged LoRA, then merge."""
     from peft import PeftModel
+
+    if not (0.0 <= float(non_circuit_lr_scale) <= 1.0):
+        raise ValueError(
+            f"non_circuit_lr_scale must be in [0.0, 1.0], got {non_circuit_lr_scale}"
+        )
 
     target_modules = resolve_lora_target_modules(base_model)
     if isinstance(base_model, PeftModel):
@@ -578,9 +585,29 @@ def run_safegrad_lora_harden(
         "reference_model": reference_model,
         "rho": float(rho),
         "kl_temperature": float(kl_temperature),
+        "alignment_loss_mode": "sft",
     }
     if "processing_class" in inspect.signature(transformers.Trainer.__init__).parameters:
         trainer_kwargs["processing_class"] = tokenizer
+
+    if circuit_info is not None and float(non_circuit_lr_scale) < 1.0:
+        suggestions = getattr(circuit_info, "layer_suggestions", None)
+        c_layers = getattr(suggestions, "layer_subset", None) if suggestions is not None else None
+        c_targets = getattr(suggestions, "target_modules", None) if suggestions is not None else None
+        trainable_named = [(n, p) for n, p in lora_model.named_parameters() if p.requires_grad]
+        matched_lora_keys = set(
+            _matched_param_keys([n for n, _ in trainable_named], c_layers, c_targets)
+        )
+        circuit_params = [p for n, p in trainable_named if n in matched_lora_keys]
+        non_circuit_params = [p for n, p in trainable_named if n not in matched_lora_keys]
+        if circuit_params and non_circuit_params:
+            optimizer = torch.optim.AdamW(
+                [
+                    {"params": circuit_params, "lr": float(lr)},
+                    {"params": non_circuit_params, "lr": float(lr) * float(non_circuit_lr_scale)},
+                ]
+            )
+            trainer_kwargs["optimizers"] = (optimizer, None)
 
     trainer = SafeGradHFTrainer(**trainer_kwargs)
     train_result = trainer.train()
@@ -592,6 +619,8 @@ def run_safegrad_lora_harden(
     tokenizer.save_pretrained(str(lora_dir))
     harden_params = {
         "method": "safegrad",
+        "alignment_loss_mode": "sft",
+        "non_circuit_lr_scale": float(non_circuit_lr_scale),
         "model_revision": model_revision,
         "lora_r": int(lora_r),
         "lora_alpha": int(lora_alpha),
@@ -606,9 +635,12 @@ def run_safegrad_lora_harden(
         "train_benign_count": len(benign_ds),
         "train_safety_count": len(safety_ds),
     }
-    harden_inputs = [
-        entry for entry in provenance_inputs if entry.get("kind") != "circuit_mask"
-    ]
+    if circuit_info is not None:
+        harden_inputs = list(provenance_inputs)
+    else:
+        harden_inputs = [
+            entry for entry in provenance_inputs if entry.get("kind") != "circuit_mask"
+        ]
     write_provenance(
         lora_dir,
         method="harden.safegrad.lora_adapter",
@@ -959,14 +991,15 @@ def run_stage3(
     lora_alpha: int = 32,
     lora_dropout: float = 0.05,
     lr: float = 2e-4,
-    epochs: float = 2.0,
+    epochs: float = 3.0,
     max_steps: int = -1,
-    rho: float = 0.25,
+    rho: float = 1.0,
     kl_temperature: float = 1.0,
+    non_circuit_lr_scale: float = 0.10,
     alpha_grid: Sequence[float] = DEFAULT_ALPHA_GRID,
     val_fraction: float = 0.20,
     seed: int = 42,
-    ref_offload_cpu: bool = False,
+    ref_offload_cpu: bool = True,
     gradient_checkpointing: bool = False,
     low_vram_t4: bool = False,
     use_trackio: bool = False,
@@ -1076,6 +1109,8 @@ def run_stage3(
         max_steps=max_steps,
         rho=rho,
         kl_temperature=kl_temperature,
+        circuit_info=circuit_info,
+        non_circuit_lr_scale=non_circuit_lr_scale,
         seed=seed,
         use_trackio=use_trackio,
     )
@@ -1165,6 +1200,8 @@ def run_stage3(
             "alpha_grid": [float(a) for a in alpha_grid],
             "rho": float(rho),
             "kl_temperature": float(kl_temperature),
+            "non_circuit_lr_scale": float(non_circuit_lr_scale),
+            "alignment_loss_mode": "sft",
             "lora_r": int(lora_r),
             "lora_alpha": int(lora_alpha),
             "generation_config": summary["generation_config"],
@@ -1219,14 +1256,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--epochs", type=float, default=2.0)
+    parser.add_argument("--epochs", type=float, default=3.0)
     parser.add_argument("--max-steps", type=int, default=-1)
-    parser.add_argument("--rho", type=float, default=0.25)
+    parser.add_argument("--rho", type=float, default=1.0)
     parser.add_argument("--kl-temperature", type=float, default=1.0)
+    parser.add_argument(
+        "--non-circuit-lr-scale",
+        type=float,
+        default=0.10,
+        help="AdamW LR multiplier for trainable LoRA params outside Stage 2 circuit mask.",
+    )
     parser.add_argument("--alpha-grid", type=float, nargs="+", default=list(DEFAULT_ALPHA_GRID))
     parser.add_argument("--val-fraction", type=float, default=0.20)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ref-offload-cpu", action="store_true", help="Keep frozen reference model on CPU.")
+    parser.add_argument(
+        "--ref-offload-cpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep frozen reference model on CPU (default True).",
+    )
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument(
         "--low-vram-t4",
@@ -1266,6 +1314,7 @@ def main(argv: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         max_steps=args.max_steps,
         rho=args.rho,
         kl_temperature=args.kl_temperature,
+        non_circuit_lr_scale=args.non_circuit_lr_scale,
         alpha_grid=args.alpha_grid,
         val_fraction=args.val_fraction,
         seed=args.seed,

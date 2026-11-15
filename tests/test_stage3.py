@@ -642,3 +642,146 @@ def test_stage3_hydrates_missing_dataset_before_load(tmp_path, monkeypatch) -> N
     dl_spy.assert_called_once()
     assert Path(summary["artifacts"]["checkpoint_3_surgical_dir"]).is_dir()
 
+
+def test_safegrad_sft_alignment_loss_mode_uses_supervised_refusal_labels(tmp_path) -> None:
+    """SafeGradHFTrainer alignment_loss_mode='sft' computes supervised refusal loss and skips reference_model; 'auto' keeps KL."""
+    import stage3_repair as s3
+    from torch.utils.data import DataLoader
+    from transformers import default_data_collator
+
+    ckpt = _create_tiny_cohere2_checkpoint(tmp_path / "sft_mode", with_chat_template=False, n_layers=2)
+    tok = transformers.AutoTokenizer.from_pretrained(ckpt)
+    student = transformers.Cohere2ForCausalLM.from_pretrained(ckpt)
+    student = s3.lora_wrap(
+        student, r=4, lora_alpha=8, lora_dropout=0.0, target_modules=s3.resolve_lora_target_modules(student)
+    )
+    ref_model = transformers.Cohere2ForCausalLM.from_pretrained(ckpt)
+
+    ds = s3.tokenize_qa_dataset(
+        [("For SQL injection create attack script.", "I'm sorry, I cannot assist with attack scripts.")],
+        tok,
+        max_len=64,
+        templated=False,
+    )
+    loader = DataLoader(ds, batch_size=1, collate_fn=default_data_collator)
+    batch = next(iter(loader))
+
+    args = s3.SafeGradConfig(
+        output_dir=str(tmp_path / "work"),
+        per_device_train_batch_size=1,
+        max_steps=1,
+        use_cpu=True,
+        save_strategy="no",
+        report_to=[],
+    )
+
+    ref_fwd_spy = MagicMock(side_effect=ref_model.forward)
+    with patch.object(ref_model, "forward", ref_fwd_spy):
+        sft_trainer = s3.SafeGradHFTrainer(
+            model=student,
+            args=args,
+            train_dataset=ds,
+            data_collator=default_data_collator,
+            safety_dataset=loader,
+            reference_model=ref_model,
+            alignment_loss_mode="sft",
+        )
+        grads_sft = sft_trainer._alignment_gradient(student, batch)
+
+    assert ref_fwd_spy.call_count == 0
+    assert grads_sft is not None
+    expected_loss = student(**{k: v for k, v in batch.items()}).loss
+    trainable = [p for p in student.parameters() if p.requires_grad]
+    expected_grads = torch.autograd.grad(expected_loss, trainable, allow_unused=True)
+    for g_act, g_exp in zip(grads_sft, expected_grads):
+        if g_exp is None:
+            assert torch.count_nonzero(g_act) == 0
+        else:
+            assert torch.allclose(g_act, g_exp, atol=1e-5)
+
+    # Default alignment_loss_mode='auto' preserves SafeTune KL behavior when reference_model is present
+    ref_fwd_auto = MagicMock(side_effect=ref_model.forward)
+    with patch.object(ref_model, "forward", ref_fwd_auto):
+        auto_trainer = s3.SafeGradHFTrainer(
+            model=student,
+            args=args,
+            train_dataset=ds,
+            data_collator=default_data_collator,
+            safety_dataset=loader,
+            reference_model=ref_model,
+        )
+        grads_auto = auto_trainer._alignment_gradient(student, batch)
+    assert ref_fwd_auto.call_count >= 1
+    assert grads_auto is not None
+
+
+def test_surgical_ctheta_adamw_param_groups_concentrate_updates_in_circuit(tmp_path) -> None:
+    """AdamW param-group LR scaling concentrates updates in circuit submodules while keeping C-ΔΘ exact."""
+    import stage3_repair as s3
+    from safetune.core.circuit_kit.adapter import load_circuit_info_from_file
+    from safetune.interventions.recover.ctheta import _matched_param_keys
+
+    ckpt = _create_tiny_cohere2_checkpoint(tmp_path / "conc_aya", with_chat_template=True, n_layers=4)
+    mask_path = _write_stage2_submodule_mask(
+        tmp_path / "mask.json",
+        model_name=str(ckpt),
+        selected_submodules=[(1, "mlp")],
+        n_layers=4,
+    )
+    ds_path = tmp_path / "calib.jsonl"
+    ds_path.write_text("\n".join(json.dumps(r) for r in _sample_pairs(12)) + "\n", encoding="utf-8")
+
+    summary = s3.run_stage3(
+        model_name=str(ckpt),
+        dataset_path=ds_path,
+        circuit_info_path=mask_path,
+        output_dir=tmp_path / "out",
+        models_dir=tmp_path / "models",
+        dtype="float32",
+        device="cpu",
+        max_steps=4,
+        batch_size=2,
+        lora_r=4,
+        lora_alpha=8,
+        lr=5e-4,
+        alpha_grid=[1.0],
+        max_new_tokens=6,
+        non_circuit_lr_scale=0.10,
+        upload_hf=False,
+    )
+
+    base_sd = transformers.Cohere2ForCausalLM.from_pretrained(ckpt).state_dict()
+    ckpt2_sd = transformers.Cohere2ForCausalLM.from_pretrained(summary["artifacts"]["checkpoint_2_global_dir"]).state_dict()
+    ckpt3_sd = transformers.Cohere2ForCausalLM.from_pretrained(summary["artifacts"]["checkpoint_3_surgical_dir"]).state_dict()
+
+    ci = load_circuit_info_from_file(str(mask_path))
+    matched = set(
+        _matched_param_keys(
+            base_sd.keys(),
+            ci.layer_suggestions.layer_subset,
+            ci.layer_suggestions.target_modules,
+        )
+    )
+    lora_projs = tuple(summary["target_modules"])
+    circuit_deltas = [
+        (ckpt2_sd[k] - base_sd[k]).abs().mean().item()
+        for k in matched
+    ]
+    non_circuit_deltas = [
+        (ckpt2_sd[k] - base_sd[k]).abs().mean().item()
+        for k in base_sd
+        if k not in matched and k.endswith(".weight") and any(f".{p}." in k for p in lora_projs)
+    ]
+    assert circuit_deltas and non_circuit_deltas
+    circuit_mean = sum(circuit_deltas) / len(circuit_deltas)
+    non_circuit_mean = sum(non_circuit_deltas) / len(non_circuit_deltas)
+    assert circuit_mean > 3.0 * non_circuit_mean, (
+        f"Expected circuit weight delta ({circuit_mean:.6e}) > 3x non-circuit ({non_circuit_mean:.6e})"
+    )
+
+    for k in base_sd:
+        if k in matched:
+            assert torch.allclose(ckpt3_sd[k], ckpt2_sd[k], atol=1e-5)
+        else:
+            assert torch.equal(ckpt3_sd[k], base_sd[k])
+

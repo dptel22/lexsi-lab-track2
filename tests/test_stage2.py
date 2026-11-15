@@ -1580,3 +1580,148 @@ def test_stage2_hydrate_hf_cli_and_layer_cap_validation(tmp_path) -> None:
         raise AssertionError("Expected ValueError when max_surgical_layers=0")
     except ValueError as exc:
         assert ">= 1" in str(exc)
+
+
+def test_has_chat_template_accepts_cohere_dict_chat_template() -> None:
+    """CohereTokenizerFast exposes chat_template as a dict; auto & on modes must accept it without breaking SimpleNamespace mocks."""
+    import sys
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage2_discover as s2
+    from circuitkit.tasks._chat import _has_chat_template
+
+    dict_tok = SimpleNamespace(chat_template={"default": _CHAT_JINJA, "rag": _CHAT_JINJA})
+    dict_model = SimpleNamespace(
+        tokenizer=dict_tok,
+        cfg=SimpleNamespace(model_name="CohereLabs/tiny-aya-fire", n_ctx=8192, device="cpu"),
+    )
+    assert _has_chat_template(dict_tok) is True
+    prof = s2.resolve_runtime_profile(
+        dict_model,
+        model_name="CohereLabs/tiny-aya-fire",
+        chat_template_mode="auto",
+        dtype="float32",
+        device="cpu",
+    )
+    assert prof.templated is True
+    assert prof.prepend_bos is False
+
+    empty_dict_tok = SimpleNamespace(chat_template={})
+    empty_dict_model = SimpleNamespace(
+        tokenizer=empty_dict_tok,
+        cfg=SimpleNamespace(model_name="CohereLabs/tiny-aya-fire", n_ctx=8192, device="cpu"),
+    )
+    assert _has_chat_template(empty_dict_tok) is False
+    with pytest.raises(ValueError):
+        s2.resolve_runtime_profile(
+            empty_dict_model,
+            model_name="CohereLabs/tiny-aya-fire",
+            chat_template_mode="on",
+            dtype="float32",
+            device="cpu",
+        )
+
+
+def test_calibrate_answer_tokens_weights_en_refusal_anchor_while_preserving_n_pairs() -> None:
+    """calibrate_answer_tokens applies 3.0x weight to 'en' anchor pairs while keeping n_pairs_used unchanged."""
+    import sys
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage2_discover as s2
+
+    vocab = {
+        "<pad>": 0,
+        "<bos>": 1,
+        "<eos>": 2,
+        "sorry": 3,
+        "here": 4,
+        "attack": 5,
+        "enharm": 6,
+        "cmharm": 7,
+        "benign": 8,
+    }
+
+    class _WeightedTok:
+        pad_token_id = 0
+        bos_token_id = 1
+        eos_token_id = 2
+        pad_token = "<pad>"
+        chat_template = None
+        all_special_ids = [0, 1, 2]
+        name_or_path = "weighted_tok"
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            if text in vocab:
+                return [vocab[text]]
+            return [vocab.get(w, 8) for w in str(text).split()]
+
+        def decode(self, ids, skip_special_tokens: bool = False) -> str:
+            inv = {v: k for k, v in vocab.items()}
+            return "".join(inv.get(int(i), "x") for i in ids)
+
+        def __len__(self) -> int:
+            return len(vocab)
+
+    class _WeightedModel:
+        tokenizer = _WeightedTok()
+        cfg = SimpleNamespace(d_vocab=len(vocab), device="cpu", model_name="gpt2")
+
+        def to_tokens(self, text: str, prepend_bos: bool = True) -> torch.Tensor:
+            ids = self.tokenizer.encode(text)
+            if prepend_bos:
+                ids = [1] + ids
+            return torch.tensor([ids], dtype=torch.long)
+
+        def __call__(self, tokens: torch.Tensor) -> torch.Tensor:
+            logits = torch.zeros((tokens.shape[0], tokens.shape[1], len(vocab)), dtype=torch.float32)
+            last_set = set(tokens[0].tolist())
+            if 6 in last_set:  # en harmful: strong refusal 'sorry'
+                logits[:, -1, 3] = 10.0
+            elif 7 in last_set:  # gu_en / kn_en harmful: compliant + mild 'attack' bias
+                logits[:, -1, 4] = 10.0
+                logits[:, -1, 5] = 4.0
+            else:  # benign: answers with 'here'
+                logits[:, -1, 4] = 10.0
+            return logits
+
+    pairs = [
+        {
+            "pair_id": "en_0",
+            "language": "en",
+            "threat_category": "web_api_exploitation",
+            "harmful": "enharm",
+            "benign": "benign",
+        },
+        {
+            "pair_id": "gu_0",
+            "language": "gu_en",
+            "threat_category": "web_api_exploitation",
+            "harmful": "cmharm",
+            "benign": "benign",
+        },
+        {
+            "pair_id": "kn_0",
+            "language": "kn_en",
+            "threat_category": "credential_financial_phishing",
+            "harmful": "cmharm",
+            "benign": "benign",
+        },
+        {
+            "pair_id": "kn_1",
+            "language": "kn_en",
+            "threat_category": "recon_malware_delivery",
+            "harmful": "cmharm",
+            "benign": "benign",
+        },
+    ]
+
+    cal = s2.calibrate_answer_tokens(_WeightedModel(), pairs, templated=False, max_seq_len=32, preflight_limit=16)
+    assert cal.n_pairs_used == 4
+    assert cal.clean_token == "sorry"
+    assert cal.clean_token_id == 3
+    assert cal.corrupt_token == "here"
+    assert cal.corrupt_token_id == 4

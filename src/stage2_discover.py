@@ -44,7 +44,7 @@ from circuitkit.provenance import (
     read_provenance,
     write_provenance,
 )
-from circuitkit.tasks._chat import VALID_MODES, resolve_chat_template, wrap_prompt
+from circuitkit.tasks._chat import VALID_MODES, _has_chat_template, resolve_chat_template, wrap_prompt
 from circuitkit.tasks import registry as _task_registry
 from circuitkit.tasks.registry import is_task_registered, register_task
 
@@ -142,10 +142,10 @@ def resolve_runtime_profile(
     templated = resolve_chat_template(chat_template_mode, model)
     if chat_template_mode == "on":
         tok = getattr(model, "tokenizer", None)
-        if tok is None or getattr(tok, "chat_template", None) is None:
+        if tok is None or not _has_chat_template(tok):
             raise ValueError(
                 f"chat_template_mode='on' requested for {model_name!r}, "
-                "but model.tokenizer.chat_template is None."
+                "but model.tokenizer lacks a non-empty chat_template."
             )
     prepend_bos = not templated
 
@@ -502,6 +502,7 @@ def calibrate_answer_tokens(
     sum_logits_corr = torch.zeros(vocab_size, dtype=torch.float64)
 
     n_used = 0
+    total_weight = 0.0
     pair_ids: List[str] = []
 
     with torch.inference_mode():
@@ -519,17 +520,20 @@ def calibrate_answer_tokens(
             c_logits = model(clean_ids)[0, -1, :vocab_size].detach().to("cpu", dtype=torch.float64)
             r_logits = model(corr_ids)[0, -1, :vocab_size].detach().to("cpu", dtype=torch.float64)
 
-            sum_logits_clean += c_logits
-            sum_logits_corr += r_logits
-            sum_logp_clean += torch.log_softmax(c_logits, dim=-1)
-            sum_logp_corr += torch.log_softmax(r_logits, dim=-1)
+            weight = 3.0 if str(row.get("language", "")).strip() == "en" else 1.0
+            sum_logits_clean += weight * c_logits
+            sum_logits_corr += weight * r_logits
+            sum_logp_clean += weight * torch.log_softmax(c_logits, dim=-1)
+            sum_logp_corr += weight * torch.log_softmax(r_logits, dim=-1)
             n_used += 1
+            total_weight += weight
             pair_ids.append(str(row["pair_id"]))
 
-    mean_logp_clean = sum_logp_clean / n_used
-    mean_logp_corr = sum_logp_corr / n_used
-    mean_logits_clean = sum_logits_clean / n_used
-    mean_logits_corr = sum_logits_corr / n_used
+    denom = total_weight if total_weight > 0.0 else float(max(1, n_used))
+    mean_logp_clean = sum_logp_clean / denom
+    mean_logp_corr = sum_logp_corr / denom
+    mean_logits_clean = sum_logits_clean / denom
+    mean_logits_corr = sum_logits_corr / denom
 
     diff_clean = mean_logp_clean - mean_logp_corr
     diff_corr = mean_logp_corr - mean_logp_clean
