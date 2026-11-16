@@ -1725,3 +1725,150 @@ def test_calibrate_answer_tokens_weights_en_refusal_anchor_while_preserving_n_pa
     assert cal.clean_token_id == 3
     assert cal.corrupt_token == "here"
     assert cal.corrupt_token_id == 4
+
+
+def test_filter_pairs_by_baseline_margin_reports_english_only_circuit_warning() -> None:
+    """filter_pairs_by_baseline_margin must emit selected_count_by_language and english_only_circuit_warning."""
+    import sys
+
+    src_dir = str(Path(__file__).resolve().parents[1] / "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    import stage2_discover as s2
+
+    vocab = {"<pad>": 0, "<bos>": 1, "<eos>": 2, "sorry": 3, "here": 4, "en_h": 5, "cm_h": 6, "ben": 7}
+
+    class _Tok:
+        pad_token_id = 0
+        bos_token_id = 1
+        eos_token_id = 2
+        pad_token = "<pad>"
+        chat_template = None
+        all_special_ids = [0, 1, 2]
+        name_or_path = "lang_margin_tok"
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            return [vocab[text]] if text in vocab else [vocab.get(w, 7) for w in str(text).split()]
+
+        def decode(self, ids, skip_special_tokens: bool = False) -> str:
+            inv = {v: k for k, v in vocab.items()}
+            return "".join(inv.get(int(i), "x") for i in ids)
+
+        def __len__(self) -> int:
+            return len(vocab)
+
+    class _EnOnlyModel:
+        tokenizer = _Tok()
+        cfg = SimpleNamespace(d_vocab=len(vocab), device="cpu", model_name="gpt2")
+
+        def to_tokens(self, text: str, prepend_bos: bool = True) -> torch.Tensor:
+            ids = ([1] if prepend_bos else []) + self.tokenizer.encode(text)
+            return torch.tensor([ids], dtype=torch.long)
+
+        def __call__(self, tokens: torch.Tensor) -> torch.Tensor:
+            logits = torch.zeros((tokens.shape[0], tokens.shape[1], len(vocab)), dtype=torch.float32)
+            s = set(tokens[0].tolist())
+            if 5 in s:
+                logits[:, -1, 3] = 8.0
+            else:
+                logits[:, -1, 4] = 8.0
+            return logits
+
+    cal = s2.CalibrationResult(
+        clean_token="sorry",
+        clean_token_id=3,
+        corrupt_token="here",
+        corrupt_token_id=4,
+        logit_diff_gap=5.0,
+        mean_clean_margin=5.0,
+        mean_corrupt_margin=0.0,
+        n_pairs_used=4,
+        templated=False,
+        prepend_bos=True,
+        pair_ids=["en_0", "en_1", "hi_0", "kn_0"],
+    )
+    pairs = [
+        {"pair_id": "en_0", "language": "en", "threat_category": "sqli", "harmful": "en_h", "benign": "ben"},
+        {"pair_id": "en_1", "language": "en", "threat_category": "sqli", "harmful": "en_h", "benign": "ben"},
+        {"pair_id": "hi_0", "language": "hi_en", "threat_category": "sqli", "harmful": "cm_h", "benign": "ben"},
+        {"pair_id": "kn_0", "language": "kn_en", "threat_category": "sqli", "harmful": "cm_h", "benign": "ben"},
+    ]
+
+    selected_en_only, stats_en_only = s2.filter_pairs_by_baseline_margin(
+        _EnOnlyModel(), pairs, cal, templated=False, max_seq_len=16, margin_threshold=0.5
+    )
+    assert len(selected_en_only) == 2
+    assert stats_en_only["selected_count_by_language"] == {"en": 2, "hi_en": 0, "kn_en": 0}
+    assert stats_en_only["english_only_circuit_warning"] is True
+
+    class _MultilingualModel(_EnOnlyModel):
+        def __call__(self, tokens: torch.Tensor) -> torch.Tensor:
+            logits = torch.zeros((tokens.shape[0], tokens.shape[1], len(vocab)), dtype=torch.float32)
+            s = set(tokens[0].tolist())
+            if 5 in s or 6 in s:
+                logits[:, -1, 3] = 8.0
+            else:
+                logits[:, -1, 4] = 8.0
+            return logits
+
+    selected_multi, stats_multi = s2.filter_pairs_by_baseline_margin(
+        _MultilingualModel(), pairs, cal, templated=False, max_seq_len=16, margin_threshold=0.5
+    )
+    assert len(selected_multi) == 4
+    assert stats_multi["selected_count_by_language"] == {"en": 2, "hi_en": 1, "kn_en": 1}
+    assert stats_multi["english_only_circuit_warning"] is False
+
+
+def test_run_hf_jobs_script_model_flag_stage2_l40s_and_error_guards() -> None:
+    """scripts/run_hf_jobs.sh supports --model, defaults stage2 to l40sx1, adds --hydrate-hf + pydantic, and rejects missing flag values."""
+    import shutil
+    import subprocess
+
+    script_path = ROOT / "scripts" / "run_hf_jobs.sh"
+    bash_candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        shutil.which("bash"),
+    ]
+    bash_exe = next(
+        (
+            cand
+            for cand in bash_candidates
+            if cand and Path(cand).exists()
+            and subprocess.run([cand, "-c", "echo ok"], capture_output=True, text=True).returncode == 0
+        ),
+        None,
+    )
+    assert bash_exe is not None
+
+    res = subprocess.run(
+        [
+            bash_exe,
+            str(script_path),
+            "stage2",
+            "--dry-run",
+            "--model",
+            "CohereLabs/tiny-aya-global",
+            "--hf-repo",
+            "soapyyapps/circuit-kavach-global",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"Dry-run failed: {res.stderr}"
+    out = res.stdout.replace("\\ ", " ")
+    assert "l40sx1" in out
+    assert "--model CohereLabs/tiny-aya-global" in out
+    assert "--hydrate-hf" in out
+    assert "soapyyapps/circuit-kavach-global" in out
+    assert "pydantic" in out
+
+    missing_val = subprocess.run(
+        [bash_exe, str(script_path), "stage2", "--dry-run", "--model"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert missing_val.returncode != 0
+

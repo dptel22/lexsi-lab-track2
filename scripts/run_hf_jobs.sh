@@ -10,8 +10,9 @@ usage() {
 Usage: scripts/run_hf_jobs.sh <stage2|stage3|stage4> [options] [-- extra stage args...]
 
 Options:
-  --flavor <name>       HF Jobs GPU flavor (default: l4x1; e.g. t4-small, t4-medium, l4x1, a10g-small)
-  --timeout <duration>  HF Jobs timeout (default: 60m)
+  --flavor <name>       HF Jobs GPU flavor (default: l40sx1 for stage2, l4x1 for stage3/4)
+  --timeout <duration>  HF Jobs timeout (default: 60m; 120m for stage4)
+  --model <model_id>    HF model ID (default: CohereLabs/tiny-aya-fire)
   --hf-repo <repo_id>   Target HF dataset repo (default: soapyyapps/circuit-kavach-cyber-codemixed)
   --image <docker_img>  Container image (default: pytorch/pytorch:2.7.0-cuda12.6-cudnn9-runtime)
   --low-vram-t4         Pass --low-vram-t4 (16 GB T4 compatibility mode) to the stage script
@@ -30,11 +31,19 @@ FLAVOR="l4x1"
 FLAVOR_SET=false
 TIMEOUT="60m"
 TIMEOUT_SET=false
+MODEL="CohereLabs/tiny-aya-fire"
 HF_REPO="soapyyapps/circuit-kavach-cyber-codemixed"
 IMAGE="pytorch/pytorch:2.7.0-cuda12.6-cudnn9-runtime"
 LOW_VRAM_T4=false
 DRY_RUN=false
 EXTRA_ARGS=()
+
+_require_flag_value() {
+  if [[ $1 -lt 2 || -z "${2:-}" ]]; then
+    echo "Error: $3 requires a non-empty value." >&2
+    exit 2
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,21 +56,30 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --flavor)
-      FLAVOR="${2:-}"
+      _require_flag_value $# "${2:-}" "$1"
+      FLAVOR="$2"
       FLAVOR_SET=true
       shift 2
       ;;
     --timeout)
-      TIMEOUT="${2:-}"
+      _require_flag_value $# "${2:-}" "$1"
+      TIMEOUT="$2"
       TIMEOUT_SET=true
       shift 2
       ;;
+    --model)
+      _require_flag_value $# "${2:-}" "$1"
+      MODEL="$2"
+      shift 2
+      ;;
     --hf-repo)
-      HF_REPO="${2:-}"
+      _require_flag_value $# "${2:-}" "$1"
+      HF_REPO="$2"
       shift 2
       ;;
     --image)
-      IMAGE="${2:-}"
+      _require_flag_value $# "${2:-}" "$1"
+      IMAGE="$2"
       shift 2
       ;;
     --low-vram-t4)
@@ -94,18 +112,22 @@ if [[ -z "$STAGE" ]]; then
   exit 2
 fi
 
+MODEL_ESC=$(printf '%q' "$MODEL")
 case "$STAGE" in
   stage2)
     STAGE_SCRIPT="src/stage2_discover.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --dataset artifacts/stage1_dataset/calibration_100_pairs.jsonl --output-dir artifacts/stage2_circuits"
+    STAGE_FLAGS="--model ${MODEL_ESC} --dataset artifacts/stage1_dataset/calibration_100_pairs.jsonl --output-dir artifacts/stage2_circuits --hydrate-hf"
+    if [[ "$FLAVOR_SET" == "false" && "$LOW_VRAM_T4" == "false" ]]; then
+      FLAVOR="l40sx1"
+    fi
     ;;
   stage3)
     STAGE_SCRIPT="src/stage3_repair.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage3_repair --gradient-checkpointing --batch-size 1 --hydrate-hf"
+    STAGE_FLAGS="--model ${MODEL_ESC} --output-dir artifacts/stage3_repair --gradient-checkpointing --batch-size 1 --hydrate-hf"
     ;;
   stage4)
     STAGE_SCRIPT="src/stage4_eval.py"
-    STAGE_FLAGS="--model CohereLabs/tiny-aya-fire --output-dir artifacts/stage4_eval_logs --max-new-tokens 128 --hydrate-hf"
+    STAGE_FLAGS="--model ${MODEL_ESC} --output-dir artifacts/stage4_eval_logs --max-new-tokens 128 --hydrate-hf"
     if [[ "$TIMEOUT_SET" == "false" ]]; then
       TIMEOUT="120m"
     fi
@@ -142,8 +164,12 @@ if [[ -z "$HF_CLI" ]]; then
 fi
 
 # Mount /workspace read-only cleanly, copy only runtime code/artifacts (excluding .venv/.env) to /tmp/lexsi, install vendored kits, and execute stage.
-PY312_SETUP="python -m pip install --no-cache-dir --quiet uv && uv venv /tmp/py312 --python 3.12 --seed && uv pip install --python /tmp/py312/bin/python --quiet torch ./vendor/CircuitKIT ./vendor/SafeTune ./vendor/AuditKIT python-dotenv huggingface_hub datasets accelerate peft trl"
-CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && mkdir -p /tmp/lexsi && cp -a /workspace/src /workspace/vendor /workspace/scripts /workspace/pyproject.toml /tmp/lexsi/ && if [ -d /workspace/artifacts/stage1_dataset ]; then mkdir -p /tmp/lexsi/artifacts && cp -a /workspace/artifacts/stage1_dataset /tmp/lexsi/artifacts/; fi && cd /tmp/lexsi && ${PY312_SETUP} && /tmp/py312/bin/python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
+PY312_SETUP="python -m pip install --no-cache-dir --quiet uv && uv venv /tmp/py312 --python 3.12 --seed && uv pip install --python /tmp/py312/bin/python --quiet torch ./vendor/CircuitKIT ./vendor/SafeTune ./vendor/AuditKIT python-dotenv huggingface_hub datasets accelerate peft trl pydantic"
+STAGE1_COPY=""
+if [[ "$MODEL" == "CohereLabs/tiny-aya-fire" ]]; then
+  STAGE1_COPY="if [ -d /workspace/artifacts/stage1_dataset ]; then mkdir -p /tmp/lexsi/artifacts && cp -a /workspace/artifacts/stage1_dataset /tmp/lexsi/artifacts/; fi && "
+fi
+CONTAINER_CMD="set -euo pipefail && rm -rf /tmp/lexsi && mkdir -p /tmp/lexsi && cp -a /workspace/src /workspace/vendor /workspace/scripts /workspace/pyproject.toml /tmp/lexsi/ && ${STAGE1_COPY}cd /tmp/lexsi && ${PY312_SETUP} && /tmp/py312/bin/python ${STAGE_SCRIPT} ${STAGE_FLAGS} --upload-hf --hf-repo $(printf '%q' "$HF_REPO")"
 
 HF_CMD=(
   "$HF_CLI" jobs run
@@ -184,6 +210,19 @@ if ! "$HF_CLI" auth whoami >/dev/null 2>&1; then
     echo "Error: HF CLI authentication check failed for HF_TOKEN." >&2
     exit 1
   fi
+fi
+
+# Zero-GPU preflight check: verify gated model config access before launching paid cloud compute.
+PY_PREFLIGHT="${PYTHON_BIN:-python}"
+if ! command -v "$PY_PREFLIGHT" >/dev/null 2>&1; then
+  [[ -x ".venv/Scripts/python.exe" ]] && PY_PREFLIGHT=".venv/Scripts/python.exe"
+  [[ -x ".venv/bin/python" ]] && PY_PREFLIGHT=".venv/bin/python"
+fi
+if command -v "$PY_PREFLIGHT" >/dev/null 2>&1 || [[ -x "$PY_PREFLIGHT" ]]; then
+  MODEL_PREFLIGHT="$MODEL" "$PY_PREFLIGHT" -c "import os; from huggingface_hub import hf_hub_download; hf_hub_download(os.environ['MODEL_PREFLIGHT'], 'config.json', token=os.environ['HF_TOKEN'])" >/dev/null 2>&1 || {
+    echo "Error: gated model access check failed for $MODEL (accept model license on HF Hub first)." >&2
+    exit 1
+  }
 fi
 
 exec "${HF_CMD[@]}"

@@ -112,6 +112,42 @@ ARTIFACT_LORA_NAME = "tiny-aya-fire-circuit-kavach-lora"
 ARTIFACT_GLOBAL_NAME = "tiny-aya-fire-global-safetune"
 ARTIFACT_SURGICAL_NAME = "tiny-aya-fire-circuit-kavach-merged"
 
+
+def resolve_model_slug(model_name: str) -> str:
+    """Resolve canonical tiny-aya-* model slug (defaulting non-tiny-aya test refs to tiny-aya-fire)."""
+    cleaned = str(model_name or "").strip()
+    if cleaned.startswith("hf:"):
+        cleaned = cleaned[3:]
+    cleaned = cleaned.replace("\\", "/").rstrip("/")
+    seg = cleaned.rsplit("/", 1)[-1].split("@", 1)[0].strip().lower()
+    if seg.startswith("tiny-aya-"):
+        return seg
+    return "tiny-aya-fire"
+
+
+def resolve_artifact_names(model_name: str) -> Tuple[str, str, str]:
+    """Return (lora_name, global_name, surgical_name) isolated per model slug."""
+    slug = resolve_model_slug(model_name)
+    return (
+        f"{slug}-circuit-kavach-lora",
+        f"{slug}-global-safetune",
+        f"{slug}-circuit-kavach-merged",
+    )
+
+
+def _circuit_mask_matches_model(ci_path: Path, model_name: str) -> bool:
+    """Return False when a Stage 2 mask and model_name identify different tiny-aya-* variants."""
+    if not ci_path.is_file():
+        return True
+    try:
+        data = json.loads(ci_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    mask_model = str(data.get("model") or "")
+    if "tiny-aya-" in mask_model.lower() and "tiny-aya-" in str(model_name).lower():
+        return resolve_model_slug(mask_model) == resolve_model_slug(model_name)
+    return True
+
 _COHERE_LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
 _GPT2_LORA_TARGETS = ("c_attn", "c_proj", "c_fc")
 
@@ -668,8 +704,24 @@ def run_safegrad_lora_harden(
     trainer = SafeGradHFTrainer(**trainer_kwargs)
     train_result = trainer.train()
 
+    log_history = list(getattr(trainer.state, "log_history", []) or [])
+    train_metrics = dict(getattr(train_result, "metrics", {}) or {})
+
+    # Free CPU reference_model storage BEFORE merge_and_unload() + ckpt2_sd clone (l4x1 30 GB RAM headroom)
+    if hasattr(trainer, "reference_model"):
+        trainer.reference_model = None
+    if reference_model is not None and reference_model is not base_model:
+        for param in reference_model.parameters():
+            param.data = torch.empty(0, dtype=param.dtype)
+        for buf in reference_model.buffers():
+            buf.data = torch.empty(0, dtype=buf.dtype)
+    del trainer
+    _release_vram()
+
+    lora_name, global_name, _ = resolve_artifact_names(profile.model_name)
+
     # Artifact 3A: Save standalone unmerged LoRA adapter BEFORE merge_and_unload()
-    lora_dir = models_dir / ARTIFACT_LORA_NAME
+    lora_dir = models_dir / lora_name
     lora_dir.mkdir(parents=True, exist_ok=True)
     lora_model.save_pretrained(str(lora_dir))
     tokenizer.save_pretrained(str(lora_dir))
@@ -719,7 +771,7 @@ def run_safegrad_lora_harden(
     ckpt2_path_str = save_checkpoint(
         merged_model,
         tokenizer,
-        ARTIFACT_GLOBAL_NAME,
+        global_name,
         out_dir=str(models_dir),
         method="harden.safegrad.merged",
         inputs=harden_inputs[1:],  # save_checkpoint automatically prepends model input
@@ -727,9 +779,7 @@ def run_safegrad_lora_harden(
     )
     ckpt2_sd = {k: v.detach().cpu().clone() for k, v in merged_model.state_dict().items()}
 
-    log_history = list(getattr(trainer.state, "log_history", []) or [])
-    train_metrics = dict(getattr(train_result, "metrics", {}) or {})
-    del trainer, lora_model
+    del lora_model
 
     return {
         "lora_adapter_dir": str(lora_dir),
@@ -986,10 +1036,11 @@ def run_ctheta_sweep_and_transplant(
         "surgical_audit": {k: v for k, v in audit.items() if k != "matched_param_keys"},
         "generation_config": {"do_sample": False, "max_new_tokens": profile.max_new_tokens},
     }
+    _, _, surgical_name = resolve_artifact_names(profile.model_name)
     ckpt3_path_str = save_checkpoint(
         repaired_model,
         tokenizer,
-        ARTIFACT_SURGICAL_NAME,
+        surgical_name,
         out_dir=str(models_dir),
         method="recover.ctheta",
         inputs=provenance_inputs[1:],
@@ -1011,6 +1062,7 @@ def upload_stage3_to_hf(
     path_in_repo: str = DEFAULT_HF_SUBFOLDER,
     repo_type: str = "dataset",
     commit_message: str = "Upload Stage 3 SafeTune and C-ΔΘ repair artifacts",
+    allow_patterns: Optional[Sequence[str]] = None,
 ) -> str:
     load_dotenv()
     token = os.getenv("HF_TOKEN")
@@ -1020,13 +1072,16 @@ def upload_stage3_to_hf(
         )
     api = HfApi(token=token)
     api.create_repo(repo_id=repo_id, repo_type=repo_type, exist_ok=True)
-    res = api.upload_folder(
-        folder_path=str(folder_path),
-        repo_id=repo_id,
-        path_in_repo=path_in_repo,
-        repo_type=repo_type,
-        commit_message=commit_message,
-    )
+    upload_kwargs: Dict[str, Any] = {
+        "folder_path": str(folder_path),
+        "repo_id": repo_id,
+        "path_in_repo": path_in_repo,
+        "repo_type": repo_type,
+        "commit_message": commit_message,
+    }
+    if allow_patterns is not None:
+        upload_kwargs["allow_patterns"] = list(allow_patterns)
+    res = api.upload_folder(**upload_kwargs)
     commit_url = getattr(res, "commit_url", None) or str(res)
     return str(commit_url)
 
@@ -1073,11 +1128,12 @@ def run_stage3(
 
     ds_path_obj = Path(dataset_path)
     ci_path_obj = Path(circuit_info_path)
+    lora_name, global_name, surgical_name = resolve_artifact_names(model_name)
     if hydrate_hf:
         patterns: List[str] = []
         if not ds_path_obj.exists():
             patterns.append("stage1_dataset/**")
-        if not ci_path_obj.exists():
+        if not ci_path_obj.exists() or not _circuit_mask_matches_model(ci_path_obj, model_name):
             patterns.append("stage2_circuits/**")
         if patterns:
             hydrate_root = (
@@ -1097,6 +1153,11 @@ def run_stage3(
                 allow_patterns=patterns,
                 token=os.getenv("HF_TOKEN") or None,
             )
+
+    if ci_path_obj.exists() and not _circuit_mask_matches_model(ci_path_obj, model_name):
+        raise ValueError(
+            f"Stage 2 circuit mask model mismatch for {model_name!r}: {ci_path_obj}"
+        )
 
     pairs = load_calibration_pairs(dataset_path)
     train_benign_qa, train_safety_qa, val_pairs = build_stage3_sft_and_safety_splits(
@@ -1197,6 +1258,7 @@ def run_stage3(
             repo_id=hf_repo,
             path_in_repo="stage3_models",
             commit_message="Upload Stage 3 Phase A SafeGrad LoRA & Global Checkpoint 2 weights",
+            allow_patterns=[f"{lora_name}/**", f"{global_name}/**"],
         )
         hf_phase_a_url = upload_stage3_to_hf(
             out_dir,
@@ -1276,6 +1338,7 @@ def run_stage3(
             repo_id=hf_repo,
             path_in_repo="stage3_models",
             commit_message="Upload Stage 3 Phase B surgical C-ΔΘ Checkpoint 3 weights",
+            allow_patterns=[f"{surgical_name}/**"],
         )
         hf_url = upload_stage3_to_hf(
             out_dir,

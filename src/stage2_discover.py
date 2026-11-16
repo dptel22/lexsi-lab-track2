@@ -747,12 +747,22 @@ def filter_pairs_by_baseline_margin(
     held_out_pairs = [e["pair_id"] for e in scored if e["pair_id"] not in selected_ids]
 
     mean_selected_delta = sum(e["delta_m"] for e in selected_entries) / max(1, len(selected_entries))
+    selected_counts_by_lang: Dict[str, int] = {k: 0 for k in eval_counts_by_lang}
+    for entry in selected_entries:
+        lg = str(entry["language"])
+        selected_counts_by_lang[lg] = selected_counts_by_lang.get(lg, 0) + 1
+    english_only_circuit_warning = bool(
+        len(eval_counts_by_lang) > 1
+        and sum(v for k, v in selected_counts_by_lang.items() if k != "en") == 0
+    )
     stats = {
         "margin_threshold": threshold,
         "total_evaluated": len(scored),
         "selected_count": len(selected_pairs),
         "positive_margin_count": sum(pos_counts_by_lang.values()),
         "positive_margin_count_by_language": {k: pos_counts_by_lang[k] for k in sorted(pos_counts_by_lang)},
+        "selected_count_by_language": {k: selected_counts_by_lang[k] for k in sorted(selected_counts_by_lang)},
+        "english_only_circuit_warning": english_only_circuit_warning,
         "evaluated_count_by_language": {k: eval_counts_by_lang[k] for k in sorted(eval_counts_by_lang)},
         "fallback_used": fallback_used,
         "selected_mean_delta_m": mean_selected_delta,

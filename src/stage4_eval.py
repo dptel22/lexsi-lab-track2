@@ -35,6 +35,11 @@ from huggingface_hub import HfApi, snapshot_download
 from pydantic import BaseModel, ConfigDict
 from safetune.core.eval.pipeline.scorer import StringMatchJudge
 
+try:
+    from .stage3_repair import resolve_artifact_names, resolve_model_slug
+except ImportError:
+    from stage3_repair import resolve_artifact_names, resolve_model_slug
+
 logger = logging.getLogger(__name__)
 
 PROVENANCE_FILENAME = "lexsi_provenance.json"
@@ -445,10 +450,11 @@ def _default_checkpoint_specs(
     model_name: str, stage3_models_dir: Path
 ) -> Dict[str, Any]:
     base_spec = model_name if model_name.startswith("hf:") else f"hf:{model_name}"
+    _, global_name, surgical_name = resolve_artifact_names(model_name)
     return {
         "checkpoint_1_base": base_spec,
-        "checkpoint_2_global_safetune": f"hf:{stage3_models_dir / 'tiny-aya-fire-global-safetune'}",
-        "checkpoint_3_surgical_ctheta": f"hf:{stage3_models_dir / 'tiny-aya-fire-circuit-kavach-merged'}",
+        "checkpoint_2_global_safetune": f"hf:{stage3_models_dir / global_name}",
+        "checkpoint_3_surgical_ctheta": f"hf:{stage3_models_dir / surgical_name}",
     }
 
 
@@ -473,6 +479,16 @@ class _AttackNonRefusalDetector(Detector):
         )
 
 
+def _rebase_ckpt_dir(raw_path: str, stage3_models_dir: Path) -> str:
+    """Rebase stale container checkpoint paths (e.g. /tmp/lexsi/...) onto stage3_models_dir."""
+    p = Path(raw_path)
+    if not p.exists():
+        rebased = Path(stage3_models_dir) / p.name
+        if rebased.exists():
+            return str(rebased)
+    return raw_path
+
+
 def _resolve_checkpoint_specs_from_stage3(
     model_name: str,
     stage3_models_dir: Path,
@@ -484,13 +500,25 @@ def _resolve_checkpoint_specs_from_stage3(
     if summary_file.is_file():
         try:
             data = json.loads(summary_file.read_text(encoding="utf-8"))
+            summary_model = str(data.get("model") or "")
+            if (
+                "tiny-aya-" in summary_model.lower()
+                and "tiny-aya-" in str(model_name).lower()
+                and resolve_model_slug(summary_model) != resolve_model_slug(model_name)
+            ):
+                logger.warning(
+                    "Ignoring Stage 3 repair_summary.json for mismatched model %r (expected %r).",
+                    summary_model,
+                    model_name,
+                )
+                return specs
             artifacts = data.get("artifacts") or {}
             ckpt2 = artifacts.get("checkpoint_2_global_dir")
             ckpt3 = artifacts.get("checkpoint_3_surgical_dir")
             if ckpt2:
-                specs["checkpoint_2_global_safetune"] = f"hf:{ckpt2}"
+                specs["checkpoint_2_global_safetune"] = f"hf:{_rebase_ckpt_dir(str(ckpt2), Path(stage3_models_dir))}"
             if ckpt3:
-                specs["checkpoint_3_surgical_ctheta"] = f"hf:{ckpt3}"
+                specs["checkpoint_3_surgical_ctheta"] = f"hf:{_rebase_ckpt_dir(str(ckpt3), Path(stage3_models_dir))}"
         except (OSError, ValueError):
             pass
     return specs
@@ -1122,6 +1150,10 @@ def _phase1_generate_for_checkpoint(
             batch_size=profile.batch_size,
             seed=seed,
         )
+        if tok is None:
+            tok = getattr(model_obj, "_tok", None) or getattr(
+                getattr(model_obj, "_pipeline", None), "tokenizer", None
+            )
     finally:
         if hasattr(model_obj, "unload"):
             model_obj.unload()
@@ -1208,6 +1240,19 @@ def run_stage4(
         low_vram_t4=low_vram_t4,
     )
     model_revision = resolve_model_revision(model_name)
+
+    if hydrate_hf and not Path(eval_dataset_path).exists():
+        load_dotenv()
+        ds_p = Path(eval_dataset_path)
+        ds_root = ds_p.parent.parent if ds_p.parent.name == "stage1_dataset" else ds_p.parent
+        ds_root.mkdir(parents=True, exist_ok=True)
+        snapshot_download(
+            repo_id=hf_repo,
+            repo_type="dataset",
+            local_dir=str(ds_root),
+            allow_patterns=["stage1_dataset/**"],
+            token=os.getenv("HF_TOKEN") or None,
+        )
 
     pairs = load_eval_pairs(eval_dataset_path, limit=limit)
     if not pairs:

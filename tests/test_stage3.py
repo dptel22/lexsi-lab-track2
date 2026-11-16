@@ -785,3 +785,106 @@ def test_surgical_ctheta_adamw_param_groups_concentrate_updates_in_circuit(tmp_p
         else:
             assert torch.equal(ckpt3_sd[k], base_sd[k])
 
+
+def test_stage3_model_slug_naming_mask_guard_ref_release_and_scoped_upload(tmp_path, monkeypatch) -> None:
+    """Stage 3 isolates model slugs, rejects cross-model Stage 2 masks, frees ref_model before ckpt2_sd, and scopes HF uploads."""
+    import stage3_repair as s3
+
+    assert s3.resolve_artifact_names("CohereLabs/tiny-aya-fire") == (
+        "tiny-aya-fire-circuit-kavach-lora",
+        "tiny-aya-fire-global-safetune",
+        "tiny-aya-fire-circuit-kavach-merged",
+    )
+    assert s3.resolve_artifact_names("CohereLabs/tiny-aya-global") == (
+        "tiny-aya-global-circuit-kavach-lora",
+        "tiny-aya-global-global-safetune",
+        "tiny-aya-global-circuit-kavach-merged",
+    )
+    assert s3.resolve_artifact_names("hf:CohereLabs/tiny-aya-water@main/") == (
+        "tiny-aya-water-circuit-kavach-lora",
+        "tiny-aya-water-global-safetune",
+        "tiny-aya-water-circuit-kavach-merged",
+    )
+    assert s3.resolve_artifact_names("CohereLabs/tiny-aya-earth") == (
+        "tiny-aya-earth-circuit-kavach-lora",
+        "tiny-aya-earth-global-safetune",
+        "tiny-aya-earth-circuit-kavach-merged",
+    )
+    assert s3.resolve_artifact_names("gpt2") == (
+        "tiny-aya-fire-circuit-kavach-lora",
+        "tiny-aya-fire-global-safetune",
+        "tiny-aya-fire-circuit-kavach-merged",
+    )
+
+    # Cross-model mask mismatch guard must reject loading tiny-aya-fire mask for tiny-aya-global
+    ds_path = tmp_path / "calib.jsonl"
+    ds_path.write_text("\n".join(json.dumps(r) for r in _sample_pairs(8)) + "\n", encoding="utf-8")
+    fire_mask = _write_stage2_submodule_mask(
+        tmp_path / "fire_mask.json",
+        model_name="CohereLabs/tiny-aya-fire",
+        selected_submodules=[(0, "mlp")],
+        n_layers=2,
+    )
+    with pytest.raises(ValueError, match="mismatch"):
+        s3.run_stage3(
+            model_name="CohereLabs/tiny-aya-global",
+            dataset_path=ds_path,
+            circuit_info_path=fire_mask,
+            output_dir=tmp_path / "mismatch_out",
+            models_dir=tmp_path / "mismatch_models",
+            upload_hf=False,
+        )
+
+    # End-to-end slugged run + scoped Phase A / Phase B allow_patterns + ref_model cleared before ckpt2_sd save
+    ckpt = _create_tiny_cohere2_checkpoint(tmp_path / "tiny-aya-global", with_chat_template=False, n_layers=2)
+    global_mask = _write_stage2_submodule_mask(
+        tmp_path / "global_mask.json",
+        model_name=str(ckpt),
+        selected_submodules=[(0, "mlp")],
+        n_layers=2,
+    )
+    monkeypatch.setenv("HF_TOKEN", "hf_dummy_token_do_not_leak")
+    upload_calls: list[dict] = []
+
+    class _SpyApi:
+        def whoami(self):
+            return {"name": "tester"}
+
+        def create_repo(self, **kwargs):
+            return None
+
+        def upload_folder(self, **kwargs):
+            upload_calls.append(dict(kwargs))
+            return SimpleNamespace(commit_url=f"https://huggingface.co/datasets/test/commit/{len(upload_calls)}")
+
+    with patch("stage3_repair.HfApi", return_value=_SpyApi()):
+        summary = s3.run_stage3(
+            model_name=str(ckpt),
+            dataset_path=ds_path,
+            circuit_info_path=global_mask,
+            output_dir=tmp_path / "g_out",
+            models_dir=tmp_path / "g_models",
+            dtype="float32",
+            device="cpu",
+            max_steps=1,
+            batch_size=1,
+            alpha_grid=[1.0],
+            max_new_tokens=6,
+            upload_hf=True,
+        )
+
+    assert Path(summary["artifacts"]["lora_adapter_dir"]).name == "tiny-aya-global-circuit-kavach-lora"
+    assert Path(summary["artifacts"]["checkpoint_2_global_dir"]).name == "tiny-aya-global-global-safetune"
+    assert Path(summary["artifacts"]["checkpoint_3_surgical_dir"]).name == "tiny-aya-global-circuit-kavach-merged"
+
+    model_uploads = [c for c in upload_calls if c.get("path_in_repo") == "stage3_models"]
+    assert len(model_uploads) == 2
+    assert set(model_uploads[0].get("allow_patterns") or []) == {
+        "tiny-aya-global-circuit-kavach-lora/**",
+        "tiny-aya-global-global-safetune/**",
+    }
+    assert set(model_uploads[1].get("allow_patterns") or []) == {
+        "tiny-aya-global-circuit-kavach-merged/**",
+    }
+
+

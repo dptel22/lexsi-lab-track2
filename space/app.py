@@ -53,6 +53,11 @@ EVAL_SUMMARY_RAW = _load_hub_json_or_text("stage4_eval_logs/eval_summary.json")
 STAGE2_MASK_RAW = _load_hub_json_or_text(
     "stage2_circuits/safety_circuit_surgical_submodules_top4_scores.json"
 )
+MULTIMODEL_MARKDOWN = _load_hub_json_or_text("multimodel/multimodel_comparison.md") or (
+    "_4-model universality `multimodel_comparison.md` has not been uploaded to "
+    f"`{HF_DATASET_REPO}` yet._"
+)
+MULTIMODEL_JSON_RAW = _load_hub_json_or_text("multimodel/multimodel_comparison.json")
 
 # Eagerly load a single base model instance at module scope (ZeroGPU best practice)
 _DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -124,7 +129,19 @@ def _format_audit_json(raw: Optional[str], fallback_msg: str) -> str:
 with gr.Blocks(title="CircuitKavach-Aya | Lexsi Lab Track 2") as demo:
     gr.Markdown(
         "# CircuitKavach-Aya: Multilingual Surgical Safety Repair\n"
-        f"Base model: `{BASE_MODEL_ID}` | Artifact repo: `{HF_DATASET_REPO}`"
+        f"Base model: `{BASE_MODEL_ID}` | Artifact repo: [`{HF_DATASET_REPO}`]"
+        f"(https://huggingface.co/datasets/{HF_DATASET_REPO})\n\n"
+        "**4-Model Universality Study (`CohereLabs/tiny-aya-{fire,global,water,earth}`):** "
+        "All 4 regional variants converge on the identical `4/72` safety circuit "
+        "(`layers.0.mlp`, `layers.16.self_attn`, `layers.20.self_attn`, `layers.21.self_attn`; "
+        "top-4 Jaccard `1.000`, 72-block Spearman `0.9217–0.9704`), achieving `94.5%–99.0%` "
+        "held-out attack refusal with `0.0%` benign over-refusal while keeping `97.45%` of weights frozen.\n\n"
+        "- [Model Collection]"
+        "(https://huggingface.co/collections/soapyyapps/circuitkavach-aya-surgical-safety-repair-models-and-adapters-6af9a5f97e17226835ac6f71) "
+        "| [Dataset & Audit Logs Collection]"
+        "(https://huggingface.co/collections/soapyyapps/circuitkavach-aya-datasets-circuits-and-auditkit-logs-6af9a5fb037f3d7eaf674f49) "
+        "| [GitHub (`dptel22/lexsi-lab-track2`)]"
+        "(https://github.com/dptel22/lexsi-lab-track2)"
     )
 
     with gr.Tab("Live ZeroGPU Inference"):
@@ -169,6 +186,17 @@ with gr.Blocks(title="CircuitKavach-Aya | Lexsi Lab Track 2") as demo:
                 "Run Stage 2 with --upload-hf to populate safety_circuit_surgical_submodules_top4_scores.json.",
             ),
             label="Stage 2 Surgical Submodule Scores",
+            language="json",
+        )
+
+    with gr.Tab("4-Model Universality & Cross-Regional Transfer"):
+        gr.Markdown(MULTIMODEL_MARKDOWN)
+        gr.Code(
+            value=_format_audit_json(
+                MULTIMODEL_JSON_RAW,
+                "Upload multimodel/multimodel_comparison.json to populate the 4-model universality audit.",
+            ),
+            label="4-Model Universality Comparison (multimodel_comparison.json)",
             language="json",
         )
 

@@ -1,4 +1,4 @@
-# CircuitKavach-Aya: Surgical Multilingual Safety Alignment (`lexsi-lab-track2`)
+# CircuitKavach-Aya: Universal 4-Block Safety Routing (`C-ΔΘ`) Across Multilingual `tiny-aya` Models (`lexsi-lab-track2`)
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg?logo=python)](https://python.org)
@@ -6,182 +6,115 @@
 [![Hugging Face Dataset Collection](https://img.shields.io/badge/%F0%9F%A4%97%20HF-Dataset%20Collection-orange)](https://huggingface.co/collections/soapyyapps/circuitkavach-aya-datasets-circuits-and-auditkit-logs-6af9a5fb037f3d7eaf674f49)
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20HF-Live%20Demo%20Space-blue)](https://huggingface.co/spaces/soapyyapps/circuit-kavach-aya)
 
-> **Lexsi Lab Hackathon — Track 2 Submission**  
-> Mechanistic Interpretability & Circuit-Guided Surgical Repair for Multilingual Cybersecurity Alignment on `CohereLabs/tiny-aya-fire` (3.35B).
+> **Lexsi Lab Track 2 Hackathon Submission (Track 2a & Track 2b)**  
+> **Full Research Article:** [**`docs/submission_article.md`**](docs/submission_article.md) · **Summary:** [`WRITEUP_DRAFT.md`](WRITEUP_DRAFT.md) · **Root-Cause Brief:** [`docs/concepts_brief.md`](docs/concepts_brief.md) · **Run Decision Record:** [`docs/RUN_DECISION_RECORD.md`](docs/RUN_DECISION_RECORD.md)  
+> *Content Warning: Referenced evaluation datasets and article examples contain defensive cybersecurity red-team prompts in English and code-mixed Hinglish, Gujlish, and Kanglish.*
+
+**One-line claim:** Modifying just **4 of 72 transformer submodules (`2.55%` of parameters)** discovered via EAP-IG restores **94.5%–99.0% code-mixed cyberattack refusal** across four 3.35B `CohereLabs/tiny-aya` models (`fire`, `global`, `water`, `earth`) while holding **benign over-refusal at `0.0%`** and keeping **`97.45%` of weights bit-for-bit frozen**.
 
 ---
 
-## 1. Executive Summary & Core Results
+## 1. Executive Summary & Core Findings
 
-Multilingual safety alignment frequently collapses in **code-mixed** conversational registers (such as Hinglish `hi_en`, Gujlish `gu_en`, and Kanglish `kn_en`), where adversaries mix colloquial romanized Indic phonetics with technical English cybersecurity terminology. While standard global parameter fine-tuning (LoRA across all layers) can enforce refusal, it modifies 100% of the network's projection blocks, increasing the risk of catastrophic forgetting and benign over-refusal.
+Multilingual safety alignment frequently collapses in **romanized code-mixed registers**—Hinglish (`hi_en`), Gujlish (`gu_en`), and Kanglish (`kn_en`)—where adversaries combine Indic morphosyntax with English cybersecurity terms. While baseline `CohereLabs/tiny-aya` models refuse **100.0%** of standard English cyberattacks (`en`), code-mixed refusal falls to **48.0%–66.0%** in Hinglish, **6.0%–16.0%** in Gujlish, and **6.0%–38.0%** in Kanglish (`40.0%–53.5%` overall).
 
-**CircuitKavach-Aya** demonstrates that **sparse, circuit-masked parameter transplantation ($C\text{-}\Delta\Theta$)** matches global alignment safety while leaving **97.45% of parameters bit-for-bit frozen**.
+**CircuitKavach-Aya** repairs this failure via deterministic **circuit-masked parameter transplantation ($C\text{-}\Delta\Theta$)** across all four `CohereLabs/tiny-aya` variants (`fire`, `global`, `water`, `earth`):
 
-```
-                  ┌───────────────────────────────────────────────┐
-                  │ CohereLabs/tiny-aya-fire (3.35B Base Model)  │
-                  └───────────────────────┬───────────────────────┘
-                                          │
-                  Stage 1: Contrastive Curated Twin Dataset (CuratorKIT)
-                                          │
-                                          ▼
-                  Stage 2: EAP-IG Circuit Discovery (CircuitKIT)
-                  Discovered Top-4 Safety Submodules (2.55% params):
-                  • layers.0.mlp       • layers.16.self_attn
-                  • layers.21.self_attn • layers.20.self_attn
-                                          │
-                                          ▼
-                  Stage 3: SafeGrad + C-ΔΘ Transplant (SafeTune)
-                  Frozen: 68/72 Blocks (97.45%) | Updated: 4/72 Blocks (2.55%)
-                                          │
-                                          ▼
-                  Stage 4: AuditKIT Decoupled Dual-Phase Evaluation
-                  Harmful Refusal: 94.5% (+54.5 pp) | Over-refusal: 0.0%
-```
+$$\Theta_{\text{repaired}} = \Theta_{\text{base}} + \alpha \cdot (M \odot (\Theta_{\text{global}} - \Theta_{\text{base}})), \qquad \alpha^* = 1.0$$
 
-### Key Verification Metrics (Held-Out 400-Prompt Benchmark)
-
-| Checkpoint | Modified Params | Frozen Params | Proj Blocks | Attack Refusal | Benign Over-Refusal | Benign Helpfulness | Selectivity Gap | RedTeam Pass |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`checkpoint_1_base`** (`tiny-aya-fire`) | 0.00% | 100.00% | 0/72 | 40.0% | 0.0% | 100.0% | +0.400 | 19.0% |
-| **`checkpoint_2_global_safetune`** | 100.00% | 0.00% | 72/72 | 99.0% | 0.0% | 100.0% | +0.990 | 47.6% |
-| **`checkpoint_3_surgical_ctheta`** | **2.55%** | **97.45%** | **4/72** | **94.5%** | **0.0%** | **100.0%** | **+0.945** | **38.1%** |
-
-*Paired bootstrap significance test on held-out harmful prompts ($n=200$ pairs): $p = 0.000999$ ($+54.5$ percentage points over base). Benign over-refusal remains $0.0\%$ ($p = 1.0$ vs base).*
-
-### Per-Language Attack Refusal Rate
-
-| Language Register | Base (`tiny-aya-fire`) | Global SafeTune (72/72) | **Surgical $C\text{-}\Delta\Theta$ (4/72)** | Surgical Gain vs Base |
-| :--- | :---: | :---: | :---: | :---: |
-| **English (`en`)** | 100.0% | 100.0% | **100.0%** | +0.0 pp (at ceiling) |
-| **Hindi-English (`hi_en`)** | 48.0% | 100.0% | **100.0%** | **+52.0 pp** |
-| **Gujarati-English (`gu_en`)** | 6.0% | 100.0% | **100.0%** | **+94.0 pp** |
-| **Kannada-English (`kn_en`)** | 6.0% | 96.0% | **78.0%** | **+72.0 pp** |
+1. **Universal 4-Block Safety Router (`Jaccard = 1.000`):** Across all four models and all 6 model pairs, `CircuitKIT` EAP-IG independently selects the exact same 4 of 72 submodules (`layers.0.mlp`, `layers.16.self_attn`, `layers.20.self_attn`, `layers.21.self_attn`) with **0.9217–0.9704 full 72-block Spearman rank correlation**, modifying `99,090,432` of `3,886,098,432` parameters (`2.55%`) and keeping **`276 / 291` tensors (`97.45%`) bit-identical**.
+2. **Regional Specialization Paradox (*Capability–Safety Asymmetry*):** South Asia specialist `tiny-aya-fire` carries **3.17× higher Layer 0 MLP attribution (`7.0312` vs. `2.2188` on `earth`)** yet suffers the lowest unaligned base refusal (`40.0%` vs. `53.5%`) and hardest Kanglish tail (`78.0%` vs. `100.0%` on `earth`), while mid-network `layers.16.self_attn` stays conserved (`2.489–2.867`).
+3. **Global Parity & Clean Residuals:** Surgical `C-ΔΘ` recovers **92.4%–98.9%** of 72-block Global SafeTune's refusal gain at **39.2× fewer modified parameters**, achieves statistical parity with full Global SafeTune on `earth` (`99.0%` vs. `99.5%`, $p=0.6124$), and keeps benign over-refusal at **`0.0%`**. Auditing all `27` residual misses across `800` surgical harmful replies shows `27 / 27` emitted benign defensive advice rather than exploit payloads.
 
 ---
 
-## 2. Public Submission Artifacts & Collections
+## 2. Multi-Model Verification Matrix (`400` Held-Out Prompts × `4` Models)
 
-All artifacts, models, datasets, spaces, and code are public and un-gated:
+| Model (`CohereLabs/tiny-aya-*`) | Base Attack Refusal | Global SafeTune (`72/72`, Over-Refusal) | **Surgical `C-ΔΘ` (`4/72`, Over-Refusal)** | Gain vs. Base (`Bootstrap p`) | Modified Params (`Frozen`) | Best `α` | Mean Benign Token Diversity |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`tiny-aya-fire`** (South Asia) | 40.0% | 99.0% (`0.0%`) | **94.5%** (`0.0%`) | **+54.5 pp** ($p=0.000999$) | **2.55%** (`97.45%`) | `1.0` | `0.9737` (`100%` helpful) |
+| **`tiny-aya-global`** (Global) | 45.5% | 99.0% (`0.0%`) | **96.5%** (`0.0%`) | **+51.0 pp** ($p=0.000999$) | **2.55%** (`97.45%`) | `1.0` | `0.9701` (`100%` helpful) |
+| **`tiny-aya-water`** (Europe/APAC) | 53.5% | 100.0% (`0.0%`) | **96.5%** (`0.0%`) | **+43.0 pp** ($p=0.000999$) | **2.55%** (`97.45%`) | `1.0` | `0.9784` (`100%` helpful) |
+| **`tiny-aya-earth`** (Africa/W. Asia) | 53.5% | 99.5% (`0.0%`) | **99.0%** (`0.0%`) | **+45.5 pp** ($p=0.000999$) | **2.55%** (`97.45%`) | `1.0` | `0.9810` (`100%` helpful) |
 
-| Artifact Type | Name / Scope | Public URL | Status |
-| :--- | :--- | :--- | :--- |
-| **Hugging Face Model Collection** | `CircuitKavach-Aya: Surgical Safety Repair Models & Adapters` | [HF Collection](https://huggingface.co/collections/soapyyapps/circuitkavach-aya-surgical-safety-repair-models-and-adapters-6af9a5f97e17226835ac6f71) | Public |
-| • Base Reference Model | `CohereLabs/tiny-aya-fire` (3.35B) | [CohereLabs/tiny-aya-fire](https://huggingface.co/CohereLabs/tiny-aya-fire) | Public |
-| • PEFT LoRA Adapter | `soapyyapps/tiny-aya-fire-circuit-kavach-lora` | [HF Model](https://huggingface.co/soapyyapps/tiny-aya-fire-circuit-kavach-lora) | Public |
-| • Global SafeTune Baseline | `soapyyapps/tiny-aya-fire-global-safetune` | [HF Model](https://huggingface.co/soapyyapps/tiny-aya-fire-global-safetune) | Public |
-| • Surgical $C\text{-}\Delta\Theta$ Transplant | `soapyyapps/tiny-aya-fire-circuit-kavach-merged` | [HF Model](https://huggingface.co/soapyyapps/tiny-aya-fire-circuit-kavach-merged) | Public |
-| **Hugging Face Dataset Collection** | `CircuitKavach-Aya: Datasets, Circuits & AuditKIT Logs` | [HF Collection](https://huggingface.co/collections/soapyyapps/circuitkavach-aya-datasets-circuits-and-auditkit-logs-6af9a5fb037f3d7eaf674f49) | Public |
-| • Curated Multi-Split Dataset | `soapyyapps/circuit-kavach-cyber-codemixed` | [HF Dataset](https://huggingface.co/datasets/soapyyapps/circuit-kavach-cyber-codemixed) | Public |
-| • Interactive Demo Space | `soapyyapps/circuit-kavach-aya` | [HF Space](https://huggingface.co/spaces/soapyyapps/circuit-kavach-aya) | Running |
-| **GitHub Repository** | `dptel22/lexsi-lab-track2` | [GitHub Repo](https://github.com/dptel22/lexsi-lab-track2) | Public |
+### Per-Language Attack Refusal Rate (`Base → Global SafeTune → Surgical C-ΔΘ`)
 
----
+| Model | `en` | `hi_en` (Hinglish) | `gu_en` (Gujlish) | `kn_en` (Kanglish) | RedTeam Pass (Base → Surg.) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`fire`** | 100.0% → 100.0% → **100.0%** | 48.0% → 100.0% → **100.0%** | 6.0% → 100.0% → **100.0%** | 6.0% → 96.0% → **78.0%** | 19.0% → **38.1%** |
+| **`global`** | 100.0% → 100.0% → **100.0%** | 58.0% → 100.0% → **100.0%** | 12.0% → 100.0% → **100.0%** | 12.0% → 96.0% → **86.0%** | 19.0% → **52.4%** |
+| **`water`** | 100.0% → 100.0% → **100.0%** | 66.0% → 100.0% → **100.0%** | 10.0% → 100.0% → **98.0%** | 38.0% → 100.0% → **88.0%** | 19.0% → **42.9%** |
+| **`earth`** | 100.0% → 100.0% → **100.0%** | 66.0% → 100.0% → **100.0%** | 16.0% → 98.0% → **96.0%** | 32.0% → 100.0% → **100.0%** | 19.0% → **52.4%** |
 
-## 3. Four-Stage Architecture & Toolkits
-
-Every stage is fully traceable via SHA-256 `lexsi.provenance/1` manifests across the four official Lexsi toolkits:
-
-### Stage 1: Dataset Curation (`CuratorKIT` — `src/stage1_curate.py`)
-- Curates **300 contrastive lexical twin pairs** (100 calibration + 200 disjoint held-out evaluation pairs) across 4 languages (`en`, `hi_en`, `gu_en`, `kn_en`) and 3 cybersecurity threat categories (Phishing/Credential Harvesting, Malware Delivery/Recon, Web/API Exploitation).
-- Each lexical twin matches exact cybersecurity keywords, syntax, and length between harmful attacks and benign defensive queries.
-
-### Stage 2: Circuit Discovery (`CircuitKIT` — `src/stage2_discover.py`)
-- Employs **Edge Attribution Patching with Integrated Gradients (EAP-IG)** on 99 clean/corrupted contrastive pairs ($m(\text{clean}) - m(\text{corrupt}) > 0.5$).
-- Calibrates on assistant refusal tokens (`" sorry"` vs. `" when"`).
-- Identifies the core refusal transmission submodules:
-  - `model.layers.0.mlp` (EAP-IG score `7.031`)
-  - `model.layers.16.self_attn` (EAP-IG score `2.489`)
-  - `model.layers.21.self_attn` (EAP-IG score `1.944`)
-  - `model.layers.20.self_attn` (EAP-IG score `1.740`)
-- Verifies faithfulness: `ablation_score = 0.6549`, `mean_jaccard = 0.9683`, `mean_spearman = 0.9998`.
-
-### Stage 3: Surgical Repair & Parameter Transplant (`SafeTune` — `src/stage3_repair.py`)
-- Trains a LoRA adapter with SafeGrad gradient projection (`alignment_loss_mode="sft"`, $\rho=1.0$, 3 epochs).
-- Uses a **two-group AdamW schedule**: full learning rate ($2\times 10^{-4}$) inside the circuit mask; dampening ($0.10\times$) outside.
-- Performs surgical transplantation $C\text{-}\Delta\Theta$:
-  $$\Theta_{\text{repaired}} = \Theta_{\text{base}} + \alpha \cdot (M \odot \Delta\Theta)$$
-- Sweeps $\alpha \in \{0.5, 1.0, 1.5, 2.0\}$ on held-out validation; selects $\alpha^* = 1.0$.
-- Bit-identity assertion: 276 of 291 weight tensors ($97.45\%$ of parameters) are bit-for-bit identical to the base model (`unmasked_violations: []`).
-
-### Stage 4: Decoupled Evaluation & Certification (`AuditKIT` — `src/stage4_eval.py`)
-- **Phase 1 (Inference Engine):** Runs deterministic generation and red-teaming (prompt injection, jailbreak, obfuscation) per checkpoint, freeing VRAM after each run.
-- **Phase 2 (Scoring & Benchmarks):** Evaluates refusal, over-refusal, and helpfulness with an isolated DiskCache; computes McNemar and paired bootstrap statistics; validates output schemas via Pydantic v2.
+*(Optional `WildGuard` and `lm-eval` hooks in [`src/stage4_eval.py`](src/stage4_eval.py) were `"disabled"` in the cloud runs; safety scoring uses dual deterministic judges `StringMatchJudge(mode="gcg")` + `RefusalDetector`, benign coherence auditing, and full inspection of all 27 residual surgical misses. See [Section 5.3 of `docs/submission_article.md`](docs/submission_article.md#53-checking-the-automatic-judge--honest-status-of-optional-judges).)*
 
 ---
 
-## 4. Root Cause Analysis: From v1 to v2 (+54.0 pp Leap)
+## 3. Four-Stage Architecture & Lexsi Kits
 
-During initial experiments (v1), the surgical repair model achieved only $40.5\%$ refusal. Through systematic debugging and Goldfish review loops, five root causes (`RC1`–`RC5`) were diagnosed and resolved:
+Every stage emits SHA-256 `lexsi.provenance/1` manifests linking inputs to outputs across four Lexsi toolkits (`AlignTune` and `AgentTune` are not used):
 
-```
-[v1: 40.5% Refusal] ──► [RC1: Loss Mode] ──► [RC2: Chat Template] ──► [RC3: Seq Alignment] ──► [RC4: LR Grouping] ──► [RC5: Alpha Sweep] ──► [v2: 94.5% Refusal]
-```
-
-1. **`RC1` (Alignment Loss Mode):** Upstream `SafeGradHFTrainer` defaulted to DPO/KL loss without positive paired response tokens, diluting gradient direction. **Fix:** Added `alignment_loss_mode="sft"` with safe gradient projection.
-2. **`RC2` (`dict`-typed Chat Template Handling):** Upstream `CircuitKIT._has_chat_template` crashed on Cohere's dict-structured tokenizer chat template. **Fix:** Added defensive inspection handling both dict and string templates.
-3. **`RC3` (Preamble & Sequence Alignment):** Cohere's ~360-token default preamble caused positional misalignment in contrastive pairs. **Fix:** Configured sequence trimming and pair length equalization.
-4. **`RC4` (Circuit-Prioritized AdamW Learning Rates):** Uniform gradient updates dispersed alignment across irrelevant layers. **Fix:** Two-group AdamW prioritizing circuit nodes ($1.0\times$ vs $0.10\times$).
-5. **`RC5` (Transplant Strength Sweep):** Default $\alpha=0.5$ under-scaled weight deltas. **Fix:** Validation sweep selected optimal $\alpha^* = 1.0$.
-
-Both upstream bug fixes are exported into tracked patch files (`patches/`) and guarded with defensive runtime monkey-patches in `src/`.
+1. **Stage 1 — `CuratorKIT v0.1.21` ([`src/stage1_curate.py`](src/stage1_curate.py)):** Curates **300** stratified lexical-twin pairs (`100` calibration + `200` disjoint held-out evaluation) across 4 languages × 3 cyber threat categories after rejecting 2 malformed candidates via `lexical_twin_gate` ([`rejected.jsonl`](artifacts/stage1_dataset/rejected.jsonl), `deduplication_gate`: `0` dropped).
+2. **Stage 2 — `CircuitKIT v0.2.1` ([`src/stage2_discover.py`](src/stage2_discover.py)):** Applies [`circuitkit_rc2_dict_chat_template.patch`](patches/circuitkit_rc2_dict_chat_template.patch) (`RC2`), preserves Cohere's single-BOS template (`templated=True`, `prepend_bos=False`), equalizes pair lengths, calibrates refusal tokens (`" sorry"` vs. `" when"`), and runs EAP-IG (`ig_steps=3`, `max_seq_len=512`, `l40sx1` 48 GB VRAM) to export the top-4/72 submodule mask (`94.44%` blocks frozen).
+3. **Stage 3 — `SafeTune v0.1.12` ([`src/stage3_repair.py`](src/stage3_repair.py)):** Applies [`safetune_rc1_sft_alignment_mode.patch`](patches/safetune_rc1_sft_alignment_mode.patch) (`RC1`), runs single-wrap LoRA `SafeGradHFTrainer` (`alignment_loss_mode="sft"`, `rho=1.0`, `epochs=3.0`, two-group `AdamW` at `2e-4` inside circuit vs. `0.10x` outside), merges Global Checkpoint 2 (`use_cache=True`), sweeps `α ∈ {0.5, 1.0, 1.5, 2.0}`, exports Surgical Checkpoint 3, and asserts `torch.equal` bit-identity on all `276 / 291` unmasked tensors.
+4. **Stage 4 — `AuditKIT v1.1.6` ([`src/stage4_eval.py`](src/stage4_eval.py)):** Executes serialized greedy generation (`max_new_tokens=128`) + 89 `RedTeamRunner` checks per checkpoint, frees VRAM, runs isolated `DiskCache` scoring and 1,000-resample paired bootstrap tests, and validates `Stage4EvalSummarySchema` via Pydantic v2. Cross-model overlap and coherence are aggregated by [`src/aggregate_multimodel.py`](src/aggregate_multimodel.py).
 
 ---
 
-## 5. Limitations & Future Directions
+## 4. Public Artifact Index (All Un-Gated / Public)
 
-1. **Low-Resource Dravidian Generalization:** While English, Hinglish, and Gujlish reached **100.0%** attack refusal, Kannada code-mixed (`kn_en`) achieved **78.0%**. Kannada tokens exhibit higher fragmentation under the tokenizer vocabulary, requiring deeper multi-lingual circuit routing.
-2. **Context Window Expansion:** Stage 2 EAP-IG was bounded to `max_seq_len=512` to maintain tractable integrated gradients across attention heads on an NVIDIA L40S. Expanding to long-context multi-turn conversations is a promising next step.
-3. **Automated Multi-Token Steering:** Current intervention is a permanent weight-level transplant ($C\text{-}\Delta\Theta$). Coupling this with runtime activation steering during generation could provide defense-in-depth against complex multi-turn jailbreaks.
+| Artifact | Scope | Public URL / Repo Path |
+| :--- | :--- | :--- |
+| **HF Model Collection** | All 12 adapters, global & surgical checkpoints | [Model Collection](https://huggingface.co/collections/soapyyapps/circuitkavach-aya-surgical-safety-repair-models-and-adapters-6af9a5f97e17226835ac6f71) |
+| • Surgical `C-ΔΘ` (`fire` / `global` / `water` / `earth`) | `2.55%` modified, `97.45%` bit-frozen (`α=1.0`) | [`fire-merged`](https://huggingface.co/soapyyapps/tiny-aya-fire-circuit-kavach-merged) · [`global-merged`](https://huggingface.co/soapyyapps/tiny-aya-global-circuit-kavach-merged) · [`water-merged`](https://huggingface.co/soapyyapps/tiny-aya-water-circuit-kavach-merged) · [`earth-merged`](https://huggingface.co/soapyyapps/tiny-aya-earth-circuit-kavach-merged) |
+| • Global SafeTune (`72/72` LoRA merged) | All-layer SafeGrad baselines | [`fire-global`](https://huggingface.co/soapyyapps/tiny-aya-fire-global-safetune) · [`global-global`](https://huggingface.co/soapyyapps/tiny-aya-global-global-safetune) · [`water-global`](https://huggingface.co/soapyyapps/tiny-aya-water-global-safetune) · [`earth-global`](https://huggingface.co/soapyyapps/tiny-aya-earth-global-safetune) |
+| • Unmerged PEFT LoRA Adapters | Standalone `r=16` LoRA weights | [`fire-lora`](https://huggingface.co/soapyyapps/tiny-aya-fire-circuit-kavach-lora) · [`global-lora`](https://huggingface.co/soapyyapps/tiny-aya-global-circuit-kavach-lora) · [`water-lora`](https://huggingface.co/soapyyapps/tiny-aya-water-circuit-kavach-lora) · [`earth-lora`](https://huggingface.co/soapyyapps/tiny-aya-earth-circuit-kavach-lora) |
+| **HF Dataset Collection** | Curated dataset, circuits, & AuditKIT logs | [Dataset Collection](https://huggingface.co/collections/soapyyapps/circuitkavach-aya-datasets-circuits-and-auditkit-logs-6af9a5fb037f3d7eaf674f49) |
+| • Primary Dataset & `fire` + `multimodel` Hub | 300 pairs + `fire` logs + `multimodel_comparison.*` | [`soapyyapps/circuit-kavach-cyber-codemixed`](https://huggingface.co/datasets/soapyyapps/circuit-kavach-cyber-codemixed) |
+| • Per-Model Stage 2–4 Hubs | `global`, `water`, `earth` circuits & logs | [`circuit-kavach-global`](https://huggingface.co/datasets/soapyyapps/circuit-kavach-global) · [`circuit-kavach-water`](https://huggingface.co/datasets/soapyyapps/circuit-kavach-water) · [`circuit-kavach-earth`](https://huggingface.co/datasets/soapyyapps/circuit-kavach-earth) |
+| **Interactive ZeroGPU Demo Space** | Live inference + 4-model explorer | [`soapyyapps/circuit-kavach-aya`](https://huggingface.co/spaces/soapyyapps/circuit-kavach-aya) ([`space/app.py`](space/app.py)) |
+| **Upstream Patches** | Portable vendor fixes (`RC1` & `RC2`) | [`circuitkit_rc2_dict_chat_template.patch`](patches/circuitkit_rc2_dict_chat_template.patch) · [`safetune_rc1_sft_alignment_mode.patch`](patches/safetune_rc1_sft_alignment_mode.patch) |
+| **Full Research Write-Up** | Complete Track 2a/2b paper & appendices | [`docs/submission_article.md`](docs/submission_article.md) |
 
 ---
 
-## 6. Standalone Local Reproduction Guide
+## 5. Local Verification & Cloud Reproduction Guide
 
-### Environment Setup
+### 5.1 Environment & Local CPU Verification (Zero 3.35B VRAM Required)
 ```bash
-# Clone the repository
 git clone https://github.com/dptel22/lexsi-lab-track2.git
 cd lexsi-lab-track2
 
-# Create virtual environment and install dependencies
 uv venv .venv --python 3.12
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv pip install -e vendor/CuratorKIT -e vendor/CircuitKIT -e vendor/SafeTune -e vendor/AuditKIT
 uv pip install -e .
-```
 
-### Applying Vendor Patches (Optional if using `src/` runtime patches)
-```bash
-# Apply tracked patches if inspecting vendor source directly:
-git -C vendor/CircuitKIT apply ../../patches/circuitkit_rc2_dict_chat_template.patch
-git -C vendor/SafeTune apply ../../patches/safetune_rc1_sft_alignment_mode.patch
-```
-
-### Running Local CPU Verification Tests
-```bash
-# Run unit tests on CPU (uses "gpt2" and synthetic test models; zero 3.35B VRAM required)
+# Run full CPU verification suite (64 unit & integration tests on "gpt2" + synthetic cohere2)
 pytest tests/ -q
 ```
 
-### Reproducing on Cloud GPU (Hugging Face Jobs)
-Set `HF_TOKEN` in your environment and launch the automated jobs:
+### 5.2 Reproducing Stage 2–4 on Hugging Face Jobs (USD 9.80 Total Across 4 Models)
+Export `HF_TOKEN` (with `Jobs: read & write` enabled; never commit `.env`) and invoke [`scripts/run_hf_jobs.sh`](scripts/run_hf_jobs.sh):
 ```bash
-bash scripts/run_hf_jobs.sh stage2   # NVIDIA L40S 48GB (Circuit Discovery)
-bash scripts/run_hf_jobs.sh stage3   # NVIDIA L4 24GB (SafeGrad + C-ΔΘ Repair)
-bash scripts/run_hf_jobs.sh stage4   # NVIDIA L4 24GB (AuditKIT Decoupled Evaluation)
+# Stage 2 runs on NVIDIA L40S 48 GB (l40sx1) for templated EAP-IG; Stage 3 & 4 run on L4 24 GB (l4x1)
+for MODEL in CohereLabs/tiny-aya-fire CohereLabs/tiny-aya-global CohereLabs/tiny-aya-water CohereLabs/tiny-aya-earth; do
+  bash scripts/run_hf_jobs.sh stage2 --model "$MODEL"
+  bash scripts/run_hf_jobs.sh stage3 --model "$MODEL"
+  bash scripts/run_hf_jobs.sh stage4 --model "$MODEL"
+done
 ```
 
 ---
 
-## 7. Citation & Acknowledgments
+## 6. Citation & Acknowledgments
 
 ```bibtex
 @software{circuitkavach_aya_2026,
   author = {Dhruv Patel},
-  title = {CircuitKavach-Aya: Surgical Multilingual Safety Alignment via Circuit-Masked Parameter Transplantation},
+  title = {CircuitKavach-Aya: Universal 4-Block Safety Routing (C-DeltaTheta) Across Multilingual tiny-aya Models},
   year = {2026},
   url = {https://github.com/dptel22/lexsi-lab-track2}
 }
 ```
-Developed with the Lexsi Lab toolkits: `CuratorKIT`, `CircuitKIT`, `SafeTune`, and `AuditKIT`.
+Built by **Dhruv Patel** ([`soapyyapps`](https://huggingface.co/soapyyapps) / [`dptel22`](https://github.com/dptel22)) using the Lexsi Lab Alignment Stack (`CuratorKIT`, `CircuitKIT`, `SafeTune`, `AuditKIT`).
